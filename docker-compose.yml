@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  # === PostgreSQL + pgvector ===
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aia-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aia_user
+      POSTGRES_PASSWORD: aia_secret_2024
+      POSTGRES_DB: aia_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aia_user -d aia_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aia-network
+
+  # === Backend (FastAPI + Python) ===
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aia-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app          # Hot-reload: mount source code
+    env_file:
+      - .env
+    environment:
+      # Override DATABASE_URL để dùng hostname "postgres" trong Docker network
+      DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aia-network
+
+  # === Frontend (Next.js + TypeScript) ===
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aia-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src           # Hot-reload: mount source code
+      - ./frontend/public:/app/public
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - backend
+    networks:
+      - aia-network
+
+volumes:
+  pgvector_data:
+    driver: local
+
+networks:
+  aia-network:
+    driver: bridge
