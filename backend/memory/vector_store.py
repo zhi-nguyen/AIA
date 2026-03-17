@@ -28,8 +28,7 @@ class VectorStoreManager:
 
         # === Setup Embedding Model (Google) ===
         self._embed_model = GeminiEmbedding(
-            api_key=self.settings.gemini_api_key,
-            model_name="text-embedding-004",
+            model_name="models/text-embedding-004",
         )
 
         # === Override global LlamaIndex settings để không dùng OpenAI ===

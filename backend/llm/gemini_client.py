@@ -21,7 +21,11 @@ class GeminiClient:
 
     def __init__(self):
         self.settings = get_settings()
-        self._client = genai.Client(api_key=self.settings.gemini_api_key)
+        self._client = genai.Client(
+            vertexai=True,
+            project=self.settings.vertex_project_id,
+            location=self.settings.vertex_location
+        )
 
     def generate_pro(
         self,

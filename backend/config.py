@@ -11,8 +11,10 @@ import os
 class Settings(BaseSettings):
     """Cấu hình chính của ứng dụng"""
 
-    # === Gemini API ===
-    gemini_api_key: str = ""
+    # === Vertex AI ===
+    vertex_project_id: str = "xiaoyue-api"
+    vertex_location: str = "asia-southeast1"
+    vertex_credentials_path: str = os.path.join(os.path.dirname(__file__), "xiaoyue-api-key.json")
 
     # === Database ===
     database_url: str = "postgresql://aia_user:aia_secret_2024@localhost:5433/aia_db"
@@ -43,4 +45,7 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Singleton pattern cho Settings"""
-    return Settings()
+    settings = Settings()
+    if settings.vertex_credentials_path and os.path.exists(settings.vertex_credentials_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.vertex_credentials_path
+    return settings
