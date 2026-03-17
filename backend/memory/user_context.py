@@ -6,6 +6,7 @@ Lưu trữ và truy xuất profile, sở thích, lịch sử tương tác
 from memory.vector_store import get_user_memory_store
 from typing import Optional
 import json
+import re
 
 
 def retrieve_user_context(user_id: str) -> str:
@@ -85,3 +86,61 @@ def initialize_user_profile(user_id: str, profile: dict) -> bool:
 def _get_default_context() -> str:
     """Trả về ngữ cảnh mặc định khi chưa có thông tin người dùng"""
     return "Chưa có thông tin người dùng. Đây là cuộc trò chuyện mới."
+
+
+def get_user_profile(user_id: str) -> Optional[dict]:
+    """
+    Truy xuất profile đã lưu của người dùng từ pgvector.
+    Parse text đã lưu thành dict có cấu trúc.
+
+    Args:
+        user_id: ID của người dùng
+
+    Returns:
+        Dict chứa profile hoặc None nếu chưa có
+    """
+    store = get_user_memory_store()
+    try:
+        result = store.query(
+            query_text=f"Thông tin người dùng {user_id}",
+            top_k=1,
+        )
+
+        if not result or result == "Empty Response":
+            return None
+
+        # Parse structured text back to dict
+        profile: dict = {"user_id": user_id}
+
+        name_match = re.search(r"- Tên:\s*(.+)", result)
+        if name_match:
+            profile["name"] = name_match.group(1).strip()
+
+        occ_match = re.search(r"- Nghề nghiệp:\s*(.+)", result)
+        if occ_match:
+            profile["occupation"] = occ_match.group(1).strip()
+
+        interests_match = re.search(r"- Sở thích:\s*(.+)", result)
+        if interests_match:
+            raw = interests_match.group(1).strip()
+            profile["interests"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+
+        news_match = re.search(r"- Nguồn tin ưa thích:\s*(.+)", result)
+        if news_match:
+            raw = news_match.group(1).strip()
+            profile["preferred_news_sources"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+
+        style_match = re.search(r"- Phong cách làm việc:\s*(.+)", result)
+        if style_match:
+            profile["work_style"] = style_match.group(1).strip()
+
+        # Chỉ trả về nếu có ít nhất trường name
+        if "name" in profile and profile["name"] != "Chưa đặt":
+            return profile
+
+        return None
+
+    except Exception as e:
+        print(f"[Memory] Lỗi khi lấy profile cho {user_id}: {e}")
+        return None
+

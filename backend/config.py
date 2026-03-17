@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # === Vertex AI ===
     vertex_project_id: str = "xiaoyue-api"
-    vertex_location: str = "asia-southeast1"
+    vertex_location: str = "us-central1"
     vertex_credentials_path: str = os.path.join(os.path.dirname(__file__), "xiaoyue-api-key.json")
 
     # === Database ===
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.5-flash"
 
     # === Vector Store ===
-    embedding_dimension: int = 768  # Google embedding dimension
+    embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"
 
     model_config = {

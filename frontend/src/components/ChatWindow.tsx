@@ -8,10 +8,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import MessageBubble from "@/components/MessageBubble";
+import UserProfileForm from "@/components/UserProfileForm";
 
 export default function ChatWindow() {
   const { messages, isLoading, error, send, clearMessages } = useChat();
   const [input, setInput] = useState("");
+  const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -51,13 +53,23 @@ export default function ChatWindow() {
             </p>
           </div>
         </div>
-        <button
-          className="chat-header__clear"
-          onClick={clearMessages}
-          title="Xóa lịch sử chat"
-        >
-          Clear
-        </button>
+        <div className="chat-header__actions">
+          <button
+            id="profile-toggle-btn"
+            className="chat-header__btn"
+            onClick={() => setShowProfile(true)}
+            title="Thiết lập thông tin cá nhân"
+          >
+            ⚙
+          </button>
+          <button
+            className="chat-header__btn"
+            onClick={clearMessages}
+            title="Xóa lịch sử chat"
+          >
+            🗑
+          </button>
+        </div>
       </header>
 
       {/* Messages */}
@@ -76,6 +88,9 @@ export default function ChatWindow() {
               </button>
               <button onClick={() => send("Giúp tôi lên kế hoạch làm việc hôm nay")}>
                 Lên kế hoạch
+              </button>
+              <button onClick={() => setShowProfile(true)}>
+                ⚙ Thiết lập thông tin
               </button>
             </div>
           </div>
@@ -115,6 +130,11 @@ export default function ChatWindow() {
           {isLoading ? "..." : "Send"}
         </button>
       </div>
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <UserProfileForm onClose={() => setShowProfile(false)} />
+      )}
     </div>
   );
 }

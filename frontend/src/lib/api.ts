@@ -75,6 +75,15 @@ export async function createUserProfile(profile: UserProfile): Promise<{ status:
 }
 
 /**
+ * Lấy profile người dùng đã lưu
+ */
+export async function getUserProfile(userId: string = "default_user"): Promise<{ status: string; profile: UserProfile | null; message?: string }> {
+  const res = await fetch(`${API_BASE_URL}/user/profile?user_id=${encodeURIComponent(userId)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
  * Lấy thông tin graph hiện tại
  */
 export async function getGraphInfo(): Promise<GraphInfo> {

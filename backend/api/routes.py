@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from agents.graph import get_compiled_graph
-from memory.user_context import initialize_user_profile
+from memory.user_context import initialize_user_profile, get_user_profile
 from langchain_core.messages import HumanMessage
 import traceback
 
@@ -78,11 +78,27 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
 
 
-# === User Profile Endpoint ===
+# === User Profile Endpoints ===
+
+@router.get("/user/profile")
+async def get_profile(user_id: str = "default_user"):
+    """Lấy profile người dùng đã lưu từ pgvector"""
+    try:
+        profile = get_user_profile(user_id)
+        if profile:
+            return {"status": "ok", "profile": profile}
+        return {
+            "status": "ok",
+            "profile": None,
+            "message": "Chưa có profile. Hãy thiết lập thông tin cá nhân.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/user/profile")
 async def create_user_profile(request: UserProfileRequest):
-    """Khởi tạo profile người dùng"""
+    """Khởi tạo hoặc cập nhật profile người dùng"""
     try:
         success = initialize_user_profile(
             user_id=request.user_id,
@@ -96,9 +112,9 @@ async def create_user_profile(request: UserProfileRequest):
         )
 
         if success:
-            return {"status": "ok", "message": f"Đã tạo profile cho {request.name}"}
+            return {"status": "ok", "message": f"Đã lưu profile cho {request.name}"}
         else:
-            raise HTTPException(status_code=500, detail="Không thể tạo profile")
+            raise HTTPException(status_code=500, detail="Không thể lưu profile")
 
     except HTTPException:
         raise
