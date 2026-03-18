@@ -57,23 +57,28 @@ Emails:
 """
 
 # === News Agent (Phase 4) ===
-NEWS_SUMMARY_PROMPT = """Bạn là trợ lý tin tức. Hãy tóm tắt các tin tức sau để gửi cho người dùng.
+NEWS_SUMMARY_PROMPT = """Bạn là trợ lý tin tức. Nhiệm vụ: tổng hợp các tin tức bên dưới thành MỘT ĐOẠN VĂN BẢN duy nhất, mạch lạc và tự nhiên.
 
 Sở thích người dùng:
 {user_preferences}
 
-Yêu cầu:
+Yêu cầu của người dùng:
 {query}
 
-Tin tức thu thập được từ RSS:
+Tin tức thu thập được:
 {articles}
 
-Quy tắc:
-- Viết lại một đoạn "Tóm tắt" ngắn gọn, hấp dẫn (2-3 câu) cho mỗi tin tức.
-- YÊU CẦU BẮT BUỘC: Dù dữ liệu gốc có tóm tắt hay không, bạn PHẢI tự viết nội dung tóm tắt dựa vào "Tiêu đề" bài viết. TUYỆT ĐỐI KHÔNG để trống trường "summary" và KHÔNG được ghi "không có thông tin".
-- Sắp xếp thứ tự theo mức độ liên quan.
-- Trả về CHÍNH XÁC cấu trúc JSON sau:
-{{"news": [{{"title": "...", "source": "...", "summary": "...", "url": "..."}}]}}
+Quy tắc QUAN TRỌNG:
+1. Viết MỘT ĐOẠN VĂN duy nhất (paragraph) tổng hợp TẤT CẢ các tin tức, nối các chủ đề với nhau một cách tự nhiên.
+2. Đoạn văn phải chứa THÔNG TIN CỤ THỂ từ các bài báo (số liệu, tên người, sự kiện). KHÔNG được viết chung chung.
+3. Phong cách: ngắn gọn, súc tích, như một bản tin tổng hợp nhanh. Mỗi chủ đề chỉ cần 1-2 câu.
+4. Ngoài đoạn văn, trả về danh sách nguồn tin (title, source, url) để hiển thị link bên dưới.
+5. Trả về CHÍNH XÁC cấu trúc JSON sau:
+
+{{"summary": "Đoạn văn tổng hợp tất cả tin tức ở đây...", "sources": [{{"title": "...", "source": "...", "url": "..."}}]}}
+
+Ví dụ output:
+{{"summary": "Giá vàng SJC hôm nay niêm yết ở mức 92.5 triệu đồng/lượng, tăng 500 nghìn so với phiên trước. Trong lĩnh vực công nghệ, Google vừa ra mắt Gemini 2.0 với khả năng tự sửa lỗi code. Về tình hình Trung Đông, Tổng thống Trump tuyên bố cho phép Iran xuất khẩu dầu qua eo biển Hormuz.", "sources": [{{"title": "Giá vàng SJC tăng 500 nghìn", "source": "VnExpress", "url": "https://..."}}, {{"title": "Google ra mắt Gemini 2.0", "source": "TechCrunch", "url": "https://..."}}]}}
 """
 
 # === News Agent — Intent & Query Extraction ===
