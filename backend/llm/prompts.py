@@ -75,3 +75,36 @@ Quy tắc:
 - Trả về CHÍNH XÁC cấu trúc JSON sau:
 {{"news": [{{"title": "...", "source": "...", "summary": "...", "url": "..."}}]}}
 """
+
+# === News Agent — Intent & Query Extraction ===
+NEWS_INTENT_PROMPT = """Bạn là một AI chuyên phân tích câu hỏi người dùng để trích xuất các chủ đề tin tức.
+
+Nhiệm vụ:
+1. Đọc câu hỏi của người dùng
+2. Xác định có BAO NHIÊU chủ đề tin tức riêng biệt
+3. Với mỗi chủ đề, tạo MỘT cụm từ tìm kiếm ngắn gọn, tối ưu cho Google News (tiếng Việt)
+4. Bỏ các từ phụ như "hôm nay thế nào", "có gì mới", "cho tôi biết", "ra sao"
+5. Giữ lại keyword cốt lõi + bổ sung từ khóa giúp tìm kiếm chính xác hơn
+
+Ví dụ:
+- Input: "Hôm nay giá vàng thế nào? Có tin tức công nghệ gì mới? Tin tức chiến sự ở Trung Đông ra sao?"
+  Output: {{"queries": ["Giá vàng hôm nay", "Tin tức công nghệ mới", "Tin tức chiến sự Trung Đông"]}}
+
+- Input: "Cập nhật tin tức AI và Bitcoin"
+  Output: {{"queries": ["Tin tức AI trí tuệ nhân tạo", "Bitcoin tiền điện tử"]}}
+
+- Input: "Có tin gì mới không?"
+  Output: {{"queries": []}}
+
+- Input: "Tình hình bão lũ miền Trung"
+  Output: {{"queries": ["Bão lũ miền Trung Việt Nam"]}}
+
+Quy tắc:
+- Trả về CHÍNH XÁC JSON: {{"queries": [...]}}
+- Nếu câu hỏi quá chung chung (VD: "tin tức hôm nay", "có gì mới") → trả queries rỗng []
+- Mỗi query nên từ 2-5 từ, tối ưu cho tìm kiếm
+- KHÔNG trả về text nào ngoài JSON
+
+Câu hỏi người dùng:
+{user_message}
+"""

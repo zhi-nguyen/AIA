@@ -19,4 +19,5 @@ class AgentState(TypedDict):
     route_reasoning: str
     tool_results: str
     final_response: str
+    search_queries: str
     error: str
