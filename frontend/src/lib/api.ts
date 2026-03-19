@@ -100,3 +100,44 @@ export async function healthCheck(): Promise<{ status: string; service: string }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+/**
+ * Chuyển đổi text thành audio (TTS)
+ * Trả về audio blob (WAV)
+ */
+export async function synthesizeSpeech(text: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "TTS error" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  return res.blob();
+}
+
+/**
+ * Chuyển đổi audio thành text (STT)
+ * Gửi audio file, nhận lại text đã nhận dạng
+ */
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+
+  const res = await fetch(`${API_BASE_URL}/stt`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "STT error" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  const data: { text: string; success: boolean } = await res.json();
+  return data.text;
+}

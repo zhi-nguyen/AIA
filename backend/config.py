@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     gemini_pro_model: str = "gemini-2.5-pro"
     gemini_flash_model: str = "gemini-2.5-flash"
 
+    # === Voice (TTS & STT) ===
+    tts_model: str = "gemini-2-5-flash-tts"
+    tts_voice: str = "Leda"
+    tts_language: str = "vi-VN"
+    stt_language: str = "vi-VN"
+
     # === Vector Store ===
     embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"
