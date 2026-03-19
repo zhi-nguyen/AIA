@@ -1,17 +1,20 @@
 /**
  * ChatWindow.tsx - Khung chat chính
  * Hiển thị danh sách tin nhắn và ô nhập
+ * Có nút microphone (🎤) để ghi âm và nhận dạng giọng nói
  */
 
 "use client";
 
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
+import { useVoice } from "@/hooks/useVoice";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
 
 export default function ChatWindow() {
   const { messages, isLoading, error, send, clearMessages } = useChat();
+  const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -40,6 +43,19 @@ export default function ChatWindow() {
     }
   };
 
+  // Toggle ghi âm microphone
+  const handleVoiceToggle = async () => {
+    if (isRecording) {
+      const text = await stopRecording();
+      if (text) {
+        setInput(text);
+        inputRef.current?.focus();
+      }
+    } else {
+      await startRecording();
+    }
+  };
+
   return (
     <div className="chat-container">
       {/* Header */}
@@ -49,7 +65,7 @@ export default function ChatWindow() {
           <div>
             <h1 className="chat-header__title">AIA - Trợ Lý AI</h1>
             <p className="chat-header__subtitle">
-              {isLoading ? "Đang suy nghĩ..." : "Online"}
+              {isLoading ? "Đang suy nghĩ..." : isRecording ? "🎤 Đang ghi âm..." : isProcessing ? "⏳ Đang nhận dạng..." : "Online"}
             </p>
           </div>
         </div>
@@ -100,10 +116,15 @@ export default function ChatWindow() {
           <MessageBubble key={msg.id} message={msg} />
         ))}
 
-        {/* Error message */}
+        {/* Error messages */}
         {error && (
           <div className="chat-error">
             Lỗi: {error}
+          </div>
+        )}
+        {voiceError && (
+          <div className="chat-error">
+            🎤 {voiceError}
           </div>
         )}
 
@@ -112,15 +133,24 @@ export default function ChatWindow() {
 
       {/* Input */}
       <div className="chat-input-container">
+        <button
+          id="voice-record-btn"
+          className={`voice-btn ${isRecording ? "voice-btn--recording" : ""} ${isProcessing ? "voice-btn--processing" : ""}`}
+          onClick={handleVoiceToggle}
+          disabled={isLoading || isProcessing}
+          title={isRecording ? "Dừng ghi âm" : "Bắt đầu ghi âm"}
+        >
+          {isProcessing ? "⏳" : isRecording ? "⏹" : "🎤"}
+        </button>
         <textarea
           ref={inputRef}
           className="chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Nhập tin nhắn... (Enter để gửi, Shift+Enter để xuống dòng)"
+          placeholder={isRecording ? "Đang ghi âm... nhấn ⏹ để dừng" : "Nhập tin nhắn... (Enter để gửi, Shift+Enter để xuống dòng)"}
           rows={1}
-          disabled={isLoading}
+          disabled={isLoading || isRecording}
         />
         <button
           className="chat-send-btn"

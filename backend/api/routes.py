@@ -3,13 +3,15 @@ routes.py - REST API Endpoints
 Định nghĩa các endpoint cho frontend gọi
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from agents.graph import get_compiled_graph
 from memory.user_context import initialize_user_profile, get_user_profile
 from langchain_core.messages import HumanMessage
 import traceback
+import io
 
 router = APIRouter()
 
@@ -37,6 +39,11 @@ class UserProfileRequest(BaseModel):
     interests: list[str] = []
     preferred_news_sources: list[str] = []
     work_style: str = ""
+
+
+class TTSRequest(BaseModel):
+    """Request body cho TTS endpoint"""
+    text: str
 
 
 # === Chat Endpoint ===
@@ -76,6 +83,71 @@ async def chat(request: ChatRequest):
         print(f"[API] Lỗi chat: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+
+
+# === Voice Endpoints (TTS & STT) ===
+
+@router.post("/tts")
+async def text_to_speech(request: TTSRequest):
+    """
+    Chuyển đổi text thành audio (WAV).
+    Sử dụng Gemini TTS với giọng Leda (Female, Vietnamese).
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text không được để trống")
+
+    try:
+        from services.tts_service import synthesize_speech
+
+        audio_bytes = synthesize_speech(request.text)
+
+        return StreamingResponse(
+            io.BytesIO(audio_bytes),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": "inline; filename=tts_output.wav",
+                "Content-Length": str(len(audio_bytes)),
+            },
+        )
+
+    except Exception as e:
+        print(f"[API] Lỗi TTS: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Lỗi TTS: {str(e)}")
+
+
+@router.post("/stt")
+async def speech_to_text(file: UploadFile = File(...)):
+    """
+    Chuyển đổi audio thành text.
+    Hỗ trợ: audio/webm, audio/ogg, audio/wav, audio/mp3.
+    """
+    try:
+        from services.stt_service import transcribe_audio
+
+        # Đọc file audio
+        audio_bytes = await file.read()
+
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="File audio rỗng")
+
+        # Lấy MIME type
+        mime_type = file.content_type or "audio/webm"
+
+        # Nhận dạng giọng nói
+        transcript = transcribe_audio(audio_bytes, mime_type=mime_type)
+
+        return {
+            "text": transcript,
+            "success": bool(transcript),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Lỗi STT: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Lỗi STT: {str(e)}")
 
 
 # === User Profile Endpoints ===
@@ -142,5 +214,5 @@ async def graph_info():
     return {
         "nodes": ["memory_injector", "router", "email_node", "news_node", "general_node"],
         "flow": "START → memory_injector → router → [email|news|general] → END",
-        "version": "Phase 3-4 - Email & News Agents",
+        "version": "Phase 5 - Voice (TTS & STT)",
     }
