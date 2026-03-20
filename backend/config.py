@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.5-flash"
 
     # === Voice (TTS & STT) ===
-    tts_model: str = "gemini-2-5-flash-tts"
+    tts_model: str = "gemini-2.5-flash-tts"
     tts_voice: str = "Leda"
     tts_language: str = "vi-VN"
     stt_language: str = "vi-VN"

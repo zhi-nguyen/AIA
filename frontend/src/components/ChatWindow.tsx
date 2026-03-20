@@ -48,8 +48,7 @@ export default function ChatWindow() {
     if (isRecording) {
       const text = await stopRecording();
       if (text) {
-        setInput(text);
-        inputRef.current?.focus();
+        send(text);
       }
     } else {
       await startRecording();
