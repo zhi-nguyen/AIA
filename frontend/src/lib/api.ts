@@ -141,3 +141,60 @@ export async function transcribeAudio(audioBlob: Blob): Promise<string> {
   const data: { text: string; success: boolean } = await res.json();
   return data.text;
 }
+
+// === File Upload ===
+
+export interface UploadResult {
+  success: boolean;
+  filename: string;
+  format: string;
+  char_count: number;
+  truncated: boolean;
+  preview: string;
+}
+
+export interface DocumentStatus {
+  has_document: boolean;
+  filename?: string;
+  format?: string;
+  char_count?: number;
+}
+
+/**
+ * Upload file document (PDF, DOCX, CSV, XLSX...)
+ */
+export async function uploadFile(file: File, userId: string = "default_user"): Promise<UploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/upload?user_id=${encodeURIComponent(userId)}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Upload error" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Xóa document đã upload
+ */
+export async function clearDocument(userId: string = "default_user"): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/upload?user_id=${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+/**
+ * Kiểm tra trạng thái document
+ */
+export async function getDocumentStatus(userId: string = "default_user"): Promise<DocumentStatus> {
+  const res = await fetch(`${API_BASE_URL}/upload/status?user_id=${encodeURIComponent(userId)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

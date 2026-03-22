@@ -1,7 +1,7 @@
 /**
  * ChatWindow.tsx - Khung chat chính
  * Hiển thị danh sách tin nhắn và ô nhập
- * Có nút microphone (🎤) để ghi âm và nhận dạng giọng nói
+ * Có nút microphone (🎤), nút đính kèm file (📎)
  */
 
 "use client";
@@ -9,6 +9,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
+import { uploadFile, clearDocument, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
 
@@ -19,6 +20,12 @@ export default function ChatWindow() {
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Document state
+  const [attachedDoc, setAttachedDoc] = useState<UploadResult | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Auto-scroll to bottom khi có tin nhắn mới
   useEffect(() => {
@@ -55,6 +62,39 @@ export default function ChatWindow() {
     }
   };
 
+  // File upload handler
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError(null);
+    setIsUploading(true);
+
+    try {
+      const result = await uploadFile(file);
+      setAttachedDoc(result);
+      // Auto-send a message asking for summary
+      send(`Tôi vừa upload file "${result.filename}". Hãy tóm tắt nội dung file.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Lỗi upload file";
+      setUploadError(msg);
+    } finally {
+      setIsUploading(false);
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Clear document
+  const handleClearDoc = async () => {
+    try {
+      await clearDocument();
+      setAttachedDoc(null);
+    } catch {
+      // Silent fail
+    }
+  };
+
   return (
     <div className="chat-container">
       {/* Header */}
@@ -64,7 +104,7 @@ export default function ChatWindow() {
           <div>
             <h1 className="chat-header__title">AIA - Trợ Lý AI</h1>
             <p className="chat-header__subtitle">
-              {isLoading ? "Đang suy nghĩ..." : isRecording ? "🎤 Đang ghi âm..." : isProcessing ? "⏳ Đang nhận dạng..." : "Online"}
+              {isLoading ? "Đang suy nghĩ..." : isRecording ? "🎤 Đang ghi âm..." : isProcessing ? "⏳ Đang nhận dạng..." : isUploading ? "📎 Đang tải file..." : "Online"}
             </p>
           </div>
         </div>
@@ -87,6 +127,21 @@ export default function ChatWindow() {
         </div>
       </header>
 
+      {/* Document badge */}
+      {attachedDoc && (
+        <div className="doc-badge">
+          <span className="doc-badge__icon">📄</span>
+          <span className="doc-badge__name">{attachedDoc.filename}</span>
+          <span className="doc-badge__info">
+            {attachedDoc.char_count.toLocaleString()} ký tự
+            {attachedDoc.truncated && " (đã cắt)"}
+          </span>
+          <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="chat-messages">
         {messages.length === 0 && (
@@ -101,8 +156,8 @@ export default function ChatWindow() {
               <button onClick={() => send("Có tin gì về AI hôm nay không?")}>
                 Tin tức AI
               </button>
-              <button onClick={() => send("Giúp tôi lên kế hoạch làm việc hôm nay")}>
-                Lên kế hoạch
+              <button onClick={() => fileInputRef.current?.click()}>
+                📎 Upload tài liệu
               </button>
               <button onClick={() => setShowProfile(true)}>
                 ⚙ Thiết lập thông tin
@@ -126,12 +181,37 @@ export default function ChatWindow() {
             🎤 {voiceError}
           </div>
         )}
+        {uploadError && (
+          <div className="chat-error">
+            📎 {uploadError}
+          </div>
+        )}
 
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
       <div className="chat-input-container">
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx,.doc,.csv,.xlsx,.xls"
+          onChange={handleFileSelect}
+          style={{ display: "none" }}
+        />
+
+        {/* File attach button */}
+        <button
+          id="file-attach-btn"
+          className={`file-btn ${isUploading ? "file-btn--uploading" : ""}`}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isLoading || isUploading}
+          title="Đính kèm file (PDF, DOCX, CSV, XLSX)"
+        >
+          {isUploading ? "⏳" : "📎"}
+        </button>
+
         <button
           id="voice-record-btn"
           className={`voice-btn ${isRecording ? "voice-btn--recording" : ""} ${isProcessing ? "voice-btn--processing" : ""}`}

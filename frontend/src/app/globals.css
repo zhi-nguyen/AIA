@@ -967,6 +967,87 @@ html, body {
   50% { transform: scale(1.15); }
 }
 
+/* === File Attach Button === */
+.file-btn {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.25s;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.file-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.file-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.file-btn--uploading {
+  opacity: 0.7;
+  cursor: wait;
+  animation: ttsPulse 1s ease-in-out infinite;
+}
+
+/* === Document Badge === */
+.doc-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(108, 92, 231, 0.08);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.doc-badge__icon {
+  font-size: 16px;
+}
+
+.doc-badge__name {
+  font-weight: 600;
+  color: var(--accent-primary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-badge__info {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.doc-badge__close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.doc-badge__close:hover {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--error);
+}
+
 /* === Responsive === */
 @media (max-width: 768px) {
   .chat-container {

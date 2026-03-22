@@ -9,6 +9,7 @@ from agents.memory_injector import memory_injector_node
 from agents.router import router_node
 from agents.email_agent import email_node
 from agents.news_agent import news_node
+from agents.document_agent import document_node
 from llm.gemini_client import get_gemini_client
 from llm.prompts import GENERAL_CHAT_PROMPT
 from langchain_core.messages import HumanMessage
@@ -53,6 +54,8 @@ def route_decision(state: AgentState) -> str:
         return "email_node"
     elif route == "news":
         return "news_node"
+    elif route == "document":
+        return "document_node"
     else:
         return "general_node"
 
@@ -72,6 +75,7 @@ def build_graph() -> StateGraph:
     graph.add_node("router", router_node)
     graph.add_node("email_node", email_node)
     graph.add_node("news_node", news_node)
+    graph.add_node("document_node", document_node)
     graph.add_node("general_node", general_chat_node)
 
     # === Kết nối Edges ===
@@ -86,6 +90,7 @@ def build_graph() -> StateGraph:
         {
             "email_node": "email_node",
             "news_node": "news_node",
+            "document_node": "document_node",
             "general_node": "general_node",
         },
     )
@@ -93,6 +98,7 @@ def build_graph() -> StateGraph:
     # Tất cả Agent nodes → END
     graph.add_edge("email_node", END)
     graph.add_edge("news_node", END)
+    graph.add_edge("document_node", END)
     graph.add_edge("general_node", END)
 
     return graph

@@ -15,6 +15,9 @@ import io
 
 router = APIRouter()
 
+# In-memory document storage (per user_id)
+_document_store: dict[str, dict] = {}
+
 
 # === Request/Response Models ===
 
@@ -65,6 +68,7 @@ async def chat(request: ChatRequest):
             "route_reasoning": "",
             "tool_results": "",
             "final_response": "",
+            "document_context": _document_store.get(request.user_id, {}).get("text", ""),
             "error": "",
         }
 
@@ -83,6 +87,80 @@ async def chat(request: ChatRequest):
         print(f"[API] Lỗi chat: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+
+
+# === Document Upload Endpoints ===
+
+@router.post("/upload")
+async def upload_document(file: UploadFile = File(...), user_id: str = "default_user"):
+    """
+    Upload và parse file document.
+    Hỗ trợ: PDF, DOCX, DOC, CSV, XLSX, XLS.
+    """
+    try:
+        from services.file_parser import parse_file, get_supported_extensions
+
+        # Validate extension
+        filename = file.filename or "unknown"
+        ext = "." + filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+        supported = get_supported_extensions()
+        if ext not in supported:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Định dạng '{ext}' không hỗ trợ. Hỗ trợ: {', '.join(supported)}",
+            )
+
+        # Đọc file
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="File rỗng")
+
+        # Parse file
+        result = parse_file(filename, file_bytes)
+
+        # Lưu vào memory store
+        _document_store[user_id] = result
+        print(f"[API] Document uploaded: {filename} ({result['char_count']} chars) for user {user_id}")
+
+        return {
+            "success": True,
+            "filename": result["filename"],
+            "format": result["format"],
+            "char_count": result["char_count"],
+            "truncated": result["truncated"],
+            "preview": result["text"][:300] + "..." if len(result["text"]) > 300 else result["text"],
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[API] Lỗi upload: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý file: {str(e)}")
+
+
+@router.delete("/upload")
+async def clear_document(user_id: str = "default_user"):
+    """Xóa document đã upload cho user."""
+    if user_id in _document_store:
+        del _document_store[user_id]
+    return {"success": True, "message": "Đã xóa tài liệu"}
+
+
+@router.get("/upload/status")
+async def upload_status(user_id: str = "default_user"):
+    """Kiểm tra trạng thái document đã upload."""
+    doc = _document_store.get(user_id)
+    if doc:
+        return {
+            "has_document": True,
+            "filename": doc["filename"],
+            "format": doc["format"],
+            "char_count": doc["char_count"],
+        }
+    return {"has_document": False}
 
 
 # === Voice Endpoints (TTS & STT) ===

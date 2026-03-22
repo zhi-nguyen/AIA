@@ -20,4 +20,5 @@ class AgentState(TypedDict):
     tool_results: str
     final_response: str
     search_queries: str
+    document_context: str
     error: str
