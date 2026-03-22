@@ -10,9 +10,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
-import { uploadFile, uploadImage, clearDocument, type UploadResult } from "@/lib/api";
+import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -50,6 +51,16 @@ export default function ChatWindow() {
   const [attachedDoc, setAttachedDoc] = useState<UploadResult | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // User state
+  const [userRole, setUserRole] = useState<string>("guest");
+
+  // Khởi tạo/check session khi tải trang
+  useEffect(() => {
+    initSession()
+      .then(res => setUserRole(res.role))
+      .catch(err => console.error("Session init failed:", err));
+  }, []);
 
   // Auto-scroll to bottom khi có tin nhắn mới
   useEffect(() => {
@@ -186,29 +197,48 @@ export default function ChatWindow() {
       {/* Header */}
       <header className="chat-header">
         <div className="chat-header__left">
-          <div className="chat-header__avatar">A</div>
+          <div className="chat-header__avatar"><Bot size={24} className="text-blue-400" /></div>
           <div>
             <h1 className="chat-header__title">AIA - Trợ Lý AI</h1>
             <p className="chat-header__subtitle">
-              {isLoading ? "Đang suy nghĩ..." : isRecording ? "🎤 Đang ghi âm..." : isProcessing ? "⏳ Đang nhận dạng..." : isUploading ? "📎 Đang tải file..." : "Online"}
+              {isLoading ? "Đang suy nghĩ..." : isRecording ? "Đang ghi âm..." : isProcessing ? "Đang nhận dạng..." : isUploading ? "Đang tải file..." : "Online"}
             </p>
           </div>
         </div>
         <div className="chat-header__actions">
           <button
+            className="chat-header__btn"
+            onClick={async () => {
+              try {
+                const data = await getGoogleAuthUrl();
+                if (data.url) {
+                  window.open(data.url, "_blank");
+                }
+              } catch (err) {
+                console.error("Google login error:", err);
+                alert("Lỗi khi lấy URL đăng nhập Google");
+              }
+            }}
+            title="Đăng nhập Google (Gmail)"
+          >
+            G
+          </button>
+          <button
             id="profile-toggle-btn"
             className="chat-header__btn"
             onClick={() => setShowProfile(true)}
-            title="Thiết lập thông tin cá nhân"
+            title={userRole === "member" ? "Thiết lập thông tin cá nhân" : "Vui lòng đăng nhập Google để thiết lập thông tin"}
+            disabled={userRole !== "member"}
+            style={{ opacity: userRole === "member" ? 1 : 0.5, cursor: userRole === "member" ? "pointer" : "not-allowed" }}
           >
-            ⚙
+            <Settings size={20} />
           </button>
           <button
             className="chat-header__btn"
             onClick={clearMessages}
             title="Xóa lịch sử chat"
           >
-            🗑
+            <Trash2 size={20} />
           </button>
         </div>
       </header>
@@ -216,14 +246,14 @@ export default function ChatWindow() {
       {/* Document badge (đã upload trước đó) */}
       {attachedDoc && (
         <div className="doc-badge">
-          <span className="doc-badge__icon">📄</span>
+          <span className="doc-badge__icon"><FileText size={16} /></span>
           <span className="doc-badge__name">{attachedDoc.filename}</span>
           <span className="doc-badge__info">
             {attachedDoc.char_count.toLocaleString()} ký tự
             {attachedDoc.truncated && " (đã cắt)"}
           </span>
           <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
-            ✕
+            <X size={14} />
           </button>
         </div>
       )}
@@ -232,21 +262,28 @@ export default function ChatWindow() {
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-empty">
-            <div className="chat-empty__icon">AIA</div>
+            <div className="chat-empty__icon"><Bot size={48} className="text-blue-500 mx-auto" /></div>
             <h2>Xin chào! Tôi là AIA</h2>
             <p>Trợ lý AI cá nhân của bạn. Hãy hỏi tôi bất cứ điều gì!</p>
             <div className="chat-empty__suggestions">
               <button onClick={() => send("Có mail nào mới không?")}>
+                <Mail size={16} className="inline mr-2" />
                 Kiểm tra email
               </button>
               <button onClick={() => send("Có tin gì về AI hôm nay không?")}>
+                <Newspaper size={16} className="inline mr-2" />
                 Tin tức AI
               </button>
               <button onClick={() => fileInputRef.current?.click()}>
-                📎 Upload tài liệu
+                <Paperclip size={16} className="inline mr-2" /> Upload tài liệu
               </button>
-              <button onClick={() => setShowProfile(true)}>
-                ⚙ Thiết lập thông tin
+              <button 
+                onClick={() => setShowProfile(true)}
+                disabled={userRole !== "member"}
+                title={userRole !== "member" ? "Vui lòng đăng nhập Google để thiết lập thông tin" : "Thiết lập thông tin"}
+                style={{ opacity: userRole === "member" ? 1 : 0.5, cursor: userRole === "member" ? "pointer" : "not-allowed" }}
+              >
+                <Settings size={16} className="inline mr-2" /> Thiết lập thông tin {userRole !== "member" && "(Cần đăng nhập)"}
               </button>
             </div>
           </div>
@@ -295,7 +332,7 @@ export default function ChatWindow() {
           disabled={isLoading || isUploading}
           title="Đính kèm file hoặc ảnh"
         >
-          {isUploading ? "⏳" : "📎"}
+          {isUploading ? <Hourglass size={20} /> : <Paperclip size={20} />}
         </button>
 
         <button
@@ -305,7 +342,7 @@ export default function ChatWindow() {
           disabled={isLoading || isProcessing}
           title={isRecording ? "Dừng ghi âm" : "Bắt đầu ghi âm"}
         >
-          {isProcessing ? "⏳" : isRecording ? "⏹" : "🎤"}
+          {isProcessing ? <Hourglass size={20} /> : isRecording ? <Square size={20} className="fill-current" /> : <Mic size={20} />}
         </button>
 
         {/* Input wrapper: preview + textarea */}
@@ -320,7 +357,7 @@ export default function ChatWindow() {
                   className="file-preview__thumb"
                 />
               ) : (
-                <span className="file-preview__doc-icon">📄</span>
+                <span className="file-preview__doc-icon"><FileText size={24} /></span>
               )}
               <div className="file-preview__info">
                 <span className="file-preview__name">{pendingFile.name}</span>
@@ -331,7 +368,7 @@ export default function ChatWindow() {
                 onClick={handleClearPending}
                 title="Xóa file"
               >
-                ✕
+                <X size={16} />
               </button>
             </div>
           )}
@@ -359,7 +396,7 @@ export default function ChatWindow() {
           onClick={handleSend}
           disabled={!canSend}
         >
-          {isLoading || isUploading ? "..." : "Send"}
+          {isLoading || isUploading ? <Hourglass size={20} /> : <Send size={20} />}
         </button>
       </div>
 

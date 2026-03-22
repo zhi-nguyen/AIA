@@ -129,6 +129,5 @@ Quy tắc:
 - Nếu người dùng hỏi câu hỏi cụ thể, tìm thông tin liên quan trong tài liệu và trả lời chính xác
 - Trích dẫn số liệu, dữ kiện cụ thể từ tài liệu khi có thể
 - Nếu thông tin không có trong tài liệu, hãy nói rõ "Thông tin này không có trong tài liệu"
-- Trả lời bằng tiếng Việt, thân thiện, dùng emoji phù hợp 📄
 - Với file CSV/Excel: phân tích cấu trúc dữ liệu, thống kê cơ bản (số dòng, cột, giá trị đặc biệt)
 """

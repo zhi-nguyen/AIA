@@ -15,7 +15,7 @@ from tools.email_tools import (
 from langchain_core.messages import HumanMessage
 
 
-def email_node(state: AgentState) -> dict:
+async def email_node(state: AgentState) -> dict:
     """
     Node Email Agent trong LangGraph.
     
@@ -34,6 +34,8 @@ def email_node(state: AgentState) -> dict:
             last_message = msg.content if hasattr(msg, "content") else str(msg)
             break
 
+    user_id = state.get("user_id", "default_user")
+
     # === Kiểm tra Gmail configuration ===
     if not check_gmail_configured():
         return {
@@ -49,10 +51,16 @@ def email_node(state: AgentState) -> dict:
             ),
             "tool_results": json.dumps({"status": "not_configured"}),
         }
+        
+    if not await check_gmail_authorized(user_id):
+        return {
+            "final_response": "Bạn chưa đăng nhập Google hoặc chưa cấp quyền đọc Gmail. Hãy đăng nhập ở góc dưới màn hình nhé!",
+            "tool_results": json.dumps({"status": "not_authorized"}),
+        }
 
     # === Fetch emails ===
     try:
-        emails = fetch_unread_emails(limit=5)
+        emails = await fetch_unread_emails(user_id=user_id, limit=5)
 
         if not emails:
             return {

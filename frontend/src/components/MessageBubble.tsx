@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "@/hooks/useChat";
 import { synthesizeSpeech } from "@/lib/api";
+import { Volume2, Square, Hourglass, User, Bot } from "lucide-react";
 
 interface MessageBubbleProps {
   message: Message;
@@ -65,7 +66,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
     <div className={`message-row ${isUser ? "message-row--user" : "message-row--ai"}`}>
       {/* Avatar */}
       <div className={`message-avatar ${isUser ? "message-avatar--user" : "message-avatar--ai"}`}>
-        {isUser ? "U" : "A"}
+        {isUser ? <User size={20} /> : <Bot size={20} />}
       </div>
 
       {/* Bubble */}
@@ -126,7 +127,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   disabled={isTTSPlaying || isTTSLoading}
                   title={isTTSPlaying ? "Đang phát..." : isTTSLoading ? "Đang tải..." : "Phát giọng nói"}
                 >
-                  {isTTSLoading ? "⏳" : isTTSPlaying ? "⏹" : "🔊"}
+                  {isTTSLoading ? <Hourglass size={16} /> : isTTSPlaying ? <Square size={16} className="fill-current" /> : <Volume2 size={16} />}
                 </button>
               )}
             </div>

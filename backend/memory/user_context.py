@@ -22,8 +22,9 @@ def retrieve_user_context(user_id: str) -> str:
     store = get_user_memory_store()
     try:
         result = store.query(
-            query_text=f"Thông tin về người dùng {user_id}",
+            query_text="Thông tin cá nhân, sở thích, và ngữ cảnh hiện tại",
             top_k=5,
+            filters={"user_id": user_id}
         )
         return result if result and result != "Empty Response" else _get_default_context()
     except Exception as e:
@@ -102,8 +103,9 @@ def get_user_profile(user_id: str) -> Optional[dict]:
     store = get_user_memory_store()
     try:
         result = store.query(
-            query_text=f"Thông tin người dùng {user_id}",
+            query_text="Thông tin chi tiết hồ sơ profile",
             top_k=1,
+            filters={"user_id": user_id, "type": "user_profile"}
         )
 
         if not result or result == "Empty Response":

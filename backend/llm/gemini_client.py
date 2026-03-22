@@ -49,6 +49,9 @@ class GeminiClient:
             contents=prompt,
             config=config,
         )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            u = response.usage_metadata
+            print(f"[Tokens Pro] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
         return response.text
 
     def generate_flash(
@@ -87,6 +90,9 @@ class GeminiClient:
             contents=contents,
             config=config,
         )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            u = response.usage_metadata
+            print(f"[Tokens Flash] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
         return response.text
 
     def stream_pro(
@@ -111,6 +117,9 @@ class GeminiClient:
             contents=prompt,
             config=config,
         ):
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                u = chunk.usage_metadata
+                print(f"[Tokens Pro Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
             if chunk.text:
                 yield chunk.text
 
@@ -135,6 +144,9 @@ class GeminiClient:
             contents=prompt,
             config=config,
         ):
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                u = chunk.usage_metadata
+                print(f"[Tokens Flash Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
             if chunk.text:
                 yield chunk.text
 

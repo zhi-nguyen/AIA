@@ -17,7 +17,7 @@ export interface Message {
   isLoading?: boolean;
 }
 
-export function useChat(userId: string = "default_user") {
+export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,6 @@ export function useChat(userId: string = "default_user") {
       try {
         const response: ChatResponse = await sendMessage({
           message: content.trim(),
-          user_id: userId,
         });
 
         // Thay thế loading message bằng response thật
@@ -85,7 +84,7 @@ export function useChat(userId: string = "default_user") {
         setIsLoading(false);
       }
     },
-    [isLoading, userId]
+    [isLoading]
   );
 
   const clearMessages = useCallback(() => {

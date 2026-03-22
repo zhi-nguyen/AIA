@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     # === Database ===
     database_url: str = "postgresql://aia_user:aia_secret_2024@localhost:5433/aia_db"
+    encryption_key: str = "AIA_SUPER_SECRET_KEY_FOR_FERNET_32_BYTES"
 
     # === Gmail OAuth2 (Phase 3) ===
     gmail_client_id: str = ""

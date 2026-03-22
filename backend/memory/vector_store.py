@@ -79,7 +79,7 @@ class VectorStoreManager:
             embed_model=self._embed_model,
         )
 
-    def query(self, query_text: str, top_k: int = 3) -> str:
+    def query(self, query_text: str, top_k: int = 3, filters: Optional[dict] = None) -> str:
         """
         Tìm kiếm thông tin liên quan trong vector store.
         Dùng Retriever (similarity search) thay vì query_engine để không cần OpenAI.
@@ -88,8 +88,16 @@ class VectorStoreManager:
             Chuỗi text kết quả tìm được (nối các node text lại)
         """
         index = self.get_index()
+        
+        llama_filters = None
+        if filters:
+            from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
+            filter_list = [ExactMatchFilter(key=k, value=v) for k, v in filters.items()]
+            llama_filters = MetadataFilters(filters=filter_list)
+
         retriever = index.as_retriever(
             similarity_top_k=top_k,
+            filters=llama_filters
         )
         nodes = retriever.retrieve(query_text)
 

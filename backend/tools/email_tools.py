@@ -32,35 +32,44 @@ CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cre
 TOKEN_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "token.json")
 
 
-def _get_gmail_service():
+async def _get_gmail_service(user_id: str):
     """
-    Khởi tạo Gmail API service với OAuth2.
+    Khởi tạo Gmail API service với OAuth2 từ DB.
     Tự động refresh token nếu hết hạn.
     """
-    creds = None
+    from services.db_service import get_google_credentials, update_google_credentials
+    from services.crypto_service import decrypt_token, encrypt_token
+    
+    creds_row = await get_google_credentials(user_id)
+    if not creds_row or not creds_row.get("encrypted_access_token"):
+        raise ValueError("User has no Google credentials")
+        
+    access_token = decrypt_token(creds_row["encrypted_access_token"])
+    refresh_token = decrypt_token(creds_row["encrypted_refresh_token"]) if creds_row.get("encrypted_refresh_token") else None
+    
+    if not os.path.exists(CREDENTIALS_PATH):
+        raise FileNotFoundError(
+            f"Không tìm thấy {CREDENTIALS_PATH}. "
+            "Hãy lấy từ Google Cloud Console."
+        )
+        
+    with open(CREDENTIALS_PATH, "r") as f:
+        client_config = json.load(f).get("web", {})
+        
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token,
+        token_uri=client_config.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=client_config.get("client_id"),
+        client_secret=client_config.get("client_secret"),
+        scopes=SCOPES
+    )
 
-    # Load token đã lưu
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-
-    # Nếu chưa có token hoặc token hết hạn
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists(CREDENTIALS_PATH):
-                raise FileNotFoundError(
-                    f"Không tìm thấy {CREDENTIALS_PATH}. "
-                    "Hãy tải credentials.json từ Google Cloud Console "
-                    "(APIs & Services > Credentials > OAuth 2.0 Client IDs) "
-                    "và đặt vào thư mục backend/"
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
-            creds = flow.run_local_server(port=8090)
-
-        # Lưu token cho lần sau
-        with open(TOKEN_PATH, "w") as token_file:
-            token_file.write(creds.to_json())
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        new_enc_access = encrypt_token(creds.token)
+        new_enc_refresh = encrypt_token(creds.refresh_token) if creds.refresh_token else creds_row["encrypted_refresh_token"]
+        await update_google_credentials(user_id, new_enc_access, new_enc_refresh)
 
     return build("gmail", "v1", credentials=creds)
 
@@ -94,19 +103,12 @@ def _get_header(headers: list, name: str) -> str:
     return ""
 
 
-def fetch_unread_emails(limit: int = 5) -> list[dict]:
+async def fetch_unread_emails(user_id: str, limit: int = 5) -> list[dict]:
     """
     Fetch email chưa đọc từ Gmail.
-    
-    Args:
-        limit: Số lượng email tối đa (default: 5)
-        
-    Returns:
-        List[dict] với format:
-        [{"id": "...", "subject": "...", "from": "...", "date": "...", "snippet": "...", "body": "..."}]
     """
     try:
-        service = _get_gmail_service()
+        service = await _get_gmail_service(user_id)
 
         # Query email chưa đọc
         results = service.users().messages().list(
@@ -222,6 +224,8 @@ def check_gmail_configured() -> bool:
     return os.path.exists(CREDENTIALS_PATH)
 
 
-def check_gmail_authorized() -> bool:
-    """Kiểm tra đã authorize Gmail chưa"""
-    return os.path.exists(TOKEN_PATH)
+async def check_gmail_authorized(user_id: str) -> bool:
+    """Kiểm tra đã authorize Gmail chưa (dựa vào BD)"""
+    from services.db_service import get_google_credentials
+    creds = await get_google_credentials(user_id)
+    return bool(creds and creds.get("encrypted_access_token"))

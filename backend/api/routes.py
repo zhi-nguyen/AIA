@@ -3,7 +3,7 @@ routes.py - REST API Endpoints
 Định nghĩa các endpoint cho frontend gọi
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -17,6 +17,50 @@ router = APIRouter()
 
 # In-memory document storage (per user_id)
 _document_store: dict[str, dict] = {}
+
+
+# === Dependencies ===
+
+async def get_current_user_id(request: Request) -> str:
+    from services.db_service import get_user_from_session
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        user_id = await get_user_from_session(session_id)
+        if user_id:
+            return user_id
+    return "default_user"
+
+
+# === Auth Sessions ===
+
+@router.get("/auth/session")
+async def get_session(request: Request, response: Response):
+    session_id = request.cookies.get("session_id")
+    user_id = None
+    role = "guest"
+    
+    from services.db_service import get_user_from_session, create_guest_user, create_session, get_user_info
+    
+    if session_id:
+        user_id = await get_user_from_session(session_id)
+        if user_id:
+            info = await get_user_info(user_id)
+            if info:
+                role = info["role"]
+                
+    if not user_id:
+        user_id = await create_guest_user()
+        session_id = await create_session(user_id)
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=30 * 24 * 60 * 60,
+            samesite="lax",
+            path="/"
+        )
+    
+    return {"status": "ok", "user_id": user_id, "role": role}
 
 
 # === Request/Response Models ===
@@ -52,7 +96,7 @@ class TTSRequest(BaseModel):
 # === Chat Endpoint ===
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
     """
     Endpoint chính để giao tiếp với AI.
     """
@@ -60,7 +104,7 @@ async def chat(request: ChatRequest):
         graph = get_compiled_graph()
 
         # Khởi tạo state ban đầu (dùng empty string thay vì None)
-        user_store = _document_store.get(request.user_id, {})
+        user_store = _document_store.get(user_id, {})
         doc_context = user_store.get("text", "")
         image_context = user_store.get("image_context", "")
         combined_context = doc_context
@@ -69,7 +113,7 @@ async def chat(request: ChatRequest):
 
         initial_state = {
             "messages": [HumanMessage(content=request.message)],
-            "user_id": request.user_id,
+            "user_id": user_id,
             "user_context": "",
             "route": "",
             "route_reasoning": "",
@@ -81,7 +125,7 @@ async def chat(request: ChatRequest):
 
         # Chạy graph
         print(f"[API] Invoking graph with message: {request.message[:100]}")
-        result = graph.invoke(initial_state)
+        result = await graph.ainvoke(initial_state)
         print(f"[API] Graph result keys: {list(result.keys())}")
 
         return ChatResponse(
@@ -99,7 +143,7 @@ async def chat(request: ChatRequest):
 # === Document Upload Endpoints ===
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), user_id: str = "default_user"):
+async def upload_document(file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
     """
     Upload và parse file document.
     Hỗ trợ: PDF, DOCX, DOC, CSV, XLSX, XLS.
@@ -149,7 +193,7 @@ async def upload_document(file: UploadFile = File(...), user_id: str = "default_
 
 
 @router.delete("/upload")
-async def clear_document(user_id: str = "default_user"):
+async def clear_document(user_id: str = Depends(get_current_user_id)):
     """Xóa document đã upload cho user."""
     if user_id in _document_store:
         del _document_store[user_id]
@@ -157,7 +201,7 @@ async def clear_document(user_id: str = "default_user"):
 
 
 @router.get("/upload/status")
-async def upload_status(user_id: str = "default_user"):
+async def upload_status(user_id: str = Depends(get_current_user_id)):
     """Kiểm tra trạng thái document đã upload."""
     doc = _document_store.get(user_id)
     if doc:
@@ -176,7 +220,7 @@ SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 @router.post("/upload/image")
-async def upload_image(file: UploadFile = File(...), user_id: str = "default_user"):
+async def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
     """
     Upload ảnh và dùng Gemini Flash Vision mô tả nội dung.
     Hỗ trợ: PNG, JPG, JPEG, GIF, WEBP.
@@ -306,7 +350,7 @@ async def speech_to_text(file: UploadFile = File(...)):
 # === User Profile Endpoints ===
 
 @router.get("/user/profile")
-async def get_profile(user_id: str = "default_user"):
+async def get_profile(user_id: str = Depends(get_current_user_id)):
     """Lấy profile người dùng đã lưu từ pgvector"""
     try:
         profile = get_user_profile(user_id)
@@ -322,11 +366,11 @@ async def get_profile(user_id: str = "default_user"):
 
 
 @router.post("/user/profile")
-async def create_user_profile(request: UserProfileRequest):
+async def create_user_profile(request: UserProfileRequest, user_id: str = Depends(get_current_user_id)):
     """Khởi tạo hoặc cập nhật profile người dùng"""
     try:
         success = initialize_user_profile(
-            user_id=request.user_id,
+            user_id=user_id,
             profile={
                 "name": request.name,
                 "occupation": request.occupation,
@@ -347,15 +391,63 @@ async def create_user_profile(request: UserProfileRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# === Google Auth Login ===
+
+@router.get("/auth/google/login")
+async def get_google_auth_url(user_id: str = Depends(get_current_user_id)):
+    """Lấy URL đăng nhập Google OAuth."""
+    import os
+    from google_auth_oauthlib.flow import Flow
+    from fastapi import HTTPException
+    
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    creds_path = os.path.join(script_dir, 'credentials.json')
+    
+    if not os.path.exists(creds_path):
+        raise HTTPException(status_code=404, detail="Không tìm thấy credentials.json")
+    
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+    flow = Flow.from_client_secrets_file(
+        creds_path,
+        scopes=SCOPES,
+        redirect_uri='http://localhost:8000/auth/callback'
+    )
+    
+    import base64
+    import hashlib
+    # Generate PKCE verifier and challenge
+    code_verifier = base64.urlsafe_b64encode(os.urandom(40)).decode('utf-8').rstrip('=')
+    code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode('utf-8')).digest()).decode('utf-8').rstrip('=')
+    
+    auth_url, _ = flow.authorization_url(
+        prompt='consent', 
+        state=user_id, 
+        access_type='offline',
+        code_challenge=code_challenge,
+        code_challenge_method='S256'
+    )
+    
+    try:
+        from main import OAUTH_STORE
+        OAUTH_STORE[user_id] = code_verifier
+    except ImportError:
+        pass
+    
+    return {"status": "ok", "url": auth_url}
+
+
 # === Gmail Status ===
 
 @router.get("/gmail/status")
-async def gmail_status():
+async def gmail_status(user_id: str = Depends(get_current_user_id)):
     """Kiểm tra trạng thái Gmail API"""
     from tools.email_tools import check_gmail_configured, check_gmail_authorized
+    authorized = await check_gmail_authorized(user_id)
     return {
         "configured": check_gmail_configured(),
-        "authorized": check_gmail_authorized(),
+        "authorized": authorized,
     }
 
 
