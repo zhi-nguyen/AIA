@@ -2,6 +2,7 @@
  * ChatWindow.tsx - Khung chat chính
  * Hiển thị danh sách tin nhắn và ô nhập
  * Có nút microphone (🎤), nút đính kèm file (📎)
+ * File/Image: preview trước → nhập message → gửi
  */
 
 "use client";
@@ -9,9 +10,27 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
-import { uploadFile, clearDocument, type UploadResult } from "@/lib/api";
+import { uploadFile, uploadImage, clearDocument, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
+
+// Image extensions
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+function getFileExtension(filename: string): string {
+  const dotIdx = filename.lastIndexOf(".");
+  return dotIdx >= 0 ? filename.slice(dotIdx).toLowerCase() : "";
+}
+
+function isImageFile(file: File): boolean {
+  return IMAGE_EXTENSIONS.has(getFileExtension(file.name));
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function ChatWindow() {
   const { messages, isLoading, error, send, clearMessages } = useChat();
@@ -22,7 +41,12 @@ export default function ChatWindow() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Document state
+  // Pending file (preview trước khi gửi)
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
+  const [pendingFileType, setPendingFileType] = useState<"document" | "image" | null>(null);
+
+  // Upload state
   const [attachedDoc, setAttachedDoc] = useState<UploadResult | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -37,10 +61,92 @@ export default function ChatWindow() {
     inputRef.current?.focus();
   }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || isLoading) return;
-    send(input);
-    setInput("");
+  // Cleanup blob URL khi unmount hoặc clear pending
+  useEffect(() => {
+    return () => {
+      if (pendingPreview && pendingPreview.startsWith("blob:")) {
+        URL.revokeObjectURL(pendingPreview);
+      }
+    };
+  }, [pendingPreview]);
+
+  // === File select → chỉ preview, KHÔNG upload ===
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError(null);
+
+    if (isImageFile(file)) {
+      // Image → tạo blob URL cho thumbnail preview
+      const blobUrl = URL.createObjectURL(file);
+      setPendingFile(file);
+      setPendingPreview(blobUrl);
+      setPendingFileType("image");
+    } else {
+      // Document → hiện icon + tên file
+      setPendingFile(file);
+      setPendingPreview(null);
+      setPendingFileType("document");
+    }
+
+    // Reset file input để cho phép chọn lại cùng file
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    // Focus vào textarea để nhập message
+    inputRef.current?.focus();
+  };
+
+  // === Xóa file pending ===
+  const handleClearPending = () => {
+    if (pendingPreview && pendingPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(pendingPreview);
+    }
+    setPendingFile(null);
+    setPendingPreview(null);
+    setPendingFileType(null);
+  };
+
+  // === Send: upload file (nếu có) → gửi message ===
+  const handleSend = async () => {
+    const hasText = input.trim().length > 0;
+    const hasFile = pendingFile !== null;
+
+    if (!hasText && !hasFile) return;
+    if (isLoading || isUploading) return;
+
+    setUploadError(null);
+
+    try {
+      // Bước 1: Upload file nếu có
+      if (hasFile && pendingFile) {
+        setIsUploading(true);
+
+        if (pendingFileType === "image") {
+          const result = await uploadImage(pendingFile);
+          // Không cần lưu doc badge cho image
+        } else {
+          const result = await uploadFile(pendingFile);
+          setAttachedDoc(result);
+        }
+
+        handleClearPending();
+        setIsUploading(false);
+      }
+
+      // Bước 2: Gửi message
+      const message = hasText
+        ? input.trim()
+        : pendingFileType === "image"
+          ? `Hãy phân tích bức ảnh tôi vừa gửi.`
+          : `Tôi vừa upload file "${pendingFile?.name}". Hãy tóm tắt nội dung file.`;
+
+      send(message);
+      setInput("");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Lỗi upload file";
+      setUploadError(msg);
+      setIsUploading(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -62,30 +168,7 @@ export default function ChatWindow() {
     }
   };
 
-  // File upload handler
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploadError(null);
-    setIsUploading(true);
-
-    try {
-      const result = await uploadFile(file);
-      setAttachedDoc(result);
-      // Auto-send a message asking for summary
-      send(`Tôi vừa upload file "${result.filename}". Hãy tóm tắt nội dung file.`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Lỗi upload file";
-      setUploadError(msg);
-    } finally {
-      setIsUploading(false);
-      // Reset file input
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  // Clear document
+  // Clear document (đã upload trước đó)
   const handleClearDoc = async () => {
     try {
       await clearDocument();
@@ -94,6 +177,9 @@ export default function ChatWindow() {
       // Silent fail
     }
   };
+
+  // Check nếu có thể gửi
+  const canSend = (input.trim().length > 0 || pendingFile !== null) && !isLoading && !isUploading;
 
   return (
     <div className="chat-container">
@@ -127,7 +213,7 @@ export default function ChatWindow() {
         </div>
       </header>
 
-      {/* Document badge */}
+      {/* Document badge (đã upload trước đó) */}
       {attachedDoc && (
         <div className="doc-badge">
           <span className="doc-badge__icon">📄</span>
@@ -190,13 +276,13 @@ export default function ChatWindow() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input area */}
       <div className="chat-input-container">
-        {/* Hidden file input */}
+        {/* Hidden file input — accept cả document + image */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.doc,.csv,.xlsx,.xls"
+          accept=".pdf,.docx,.doc,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.gif,.webp"
           onChange={handleFileSelect}
           style={{ display: "none" }}
         />
@@ -207,7 +293,7 @@ export default function ChatWindow() {
           className={`file-btn ${isUploading ? "file-btn--uploading" : ""}`}
           onClick={() => fileInputRef.current?.click()}
           disabled={isLoading || isUploading}
-          title="Đính kèm file (PDF, DOCX, CSV, XLSX)"
+          title="Đính kèm file hoặc ảnh"
         >
           {isUploading ? "⏳" : "📎"}
         </button>
@@ -221,22 +307,59 @@ export default function ChatWindow() {
         >
           {isProcessing ? "⏳" : isRecording ? "⏹" : "🎤"}
         </button>
-        <textarea
-          ref={inputRef}
-          className="chat-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={isRecording ? "Đang ghi âm... nhấn ⏹ để dừng" : "Nhập tin nhắn... (Enter để gửi, Shift+Enter để xuống dòng)"}
-          rows={1}
-          disabled={isLoading || isRecording}
-        />
+
+        {/* Input wrapper: preview + textarea */}
+        <div className="chat-input-wrapper">
+          {/* File preview strip */}
+          {pendingFile && (
+            <div className="file-preview">
+              {pendingFileType === "image" && pendingPreview ? (
+                <img
+                  src={pendingPreview}
+                  alt={pendingFile.name}
+                  className="file-preview__thumb"
+                />
+              ) : (
+                <span className="file-preview__doc-icon">📄</span>
+              )}
+              <div className="file-preview__info">
+                <span className="file-preview__name">{pendingFile.name}</span>
+                <span className="file-preview__size">{formatFileSize(pendingFile.size)}</span>
+              </div>
+              <button
+                className="file-preview__close"
+                onClick={handleClearPending}
+                title="Xóa file"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          <textarea
+            ref={inputRef}
+            className="chat-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              pendingFile
+                ? "Nhập tin nhắn kèm file... (hoặc Enter để gửi)"
+                : isRecording
+                  ? "Đang ghi âm... nhấn ⏹ để dừng"
+                  : "Nhập tin nhắn... (Enter để gửi, Shift+Enter để xuống dòng)"
+            }
+            rows={1}
+            disabled={isLoading || isRecording}
+          />
+        </div>
+
         <button
           className="chat-send-btn"
           onClick={handleSend}
-          disabled={!input.trim() || isLoading}
+          disabled={!canSend}
         >
-          {isLoading ? "..." : "Send"}
+          {isLoading || isUploading ? "..." : "Send"}
         </button>
       </div>
 

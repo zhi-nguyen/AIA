@@ -60,6 +60,13 @@ async def chat(request: ChatRequest):
         graph = get_compiled_graph()
 
         # Khởi tạo state ban đầu (dùng empty string thay vì None)
+        user_store = _document_store.get(request.user_id, {})
+        doc_context = user_store.get("text", "")
+        image_context = user_store.get("image_context", "")
+        combined_context = doc_context
+        if image_context:
+            combined_context += f"\n\n[Ảnh đã upload: {user_store.get('image_filename', 'ảnh')}]\n{image_context}"
+
         initial_state = {
             "messages": [HumanMessage(content=request.message)],
             "user_id": request.user_id,
@@ -68,7 +75,7 @@ async def chat(request: ChatRequest):
             "route_reasoning": "",
             "tool_results": "",
             "final_response": "",
-            "document_context": _document_store.get(request.user_id, {}).get("text", ""),
+            "document_context": combined_context,
             "error": "",
         }
 
@@ -161,6 +168,74 @@ async def upload_status(user_id: str = "default_user"):
             "char_count": doc["char_count"],
         }
     return {"has_document": False}
+
+
+# === Image Upload Endpoint ===
+
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+@router.post("/upload/image")
+async def upload_image(file: UploadFile = File(...), user_id: str = "default_user"):
+    """
+    Upload ảnh và dùng Gemini Flash Vision mô tả nội dung.
+    Hỗ trợ: PNG, JPG, JPEG, GIF, WEBP.
+    """
+    try:
+        filename = file.filename or "unknown"
+        ext = "." + filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+        if ext not in SUPPORTED_IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Định dạng '{ext}' không hỗ trợ. Hỗ trợ: {', '.join(sorted(SUPPORTED_IMAGE_EXTENSIONS))}",
+            )
+
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="File ảnh rỗng")
+
+        # Dùng Gemini Flash Vision mô tả ảnh
+        from llm.gemini_client import get_gemini_client
+        from google.genai import types as genai_types
+        import base64
+
+        client = get_gemini_client()
+        mime_type = file.content_type or f"image/{ext.lstrip('.')}"
+
+        # Encode image to base64 for inline data
+        b64_data = base64.b64encode(image_bytes).decode("utf-8")
+
+        description = client.generate_flash(
+            prompt="Mô tả chi tiết nội dung bức ảnh này bằng tiếng Việt. Bao gồm: chủ thể chính, bối cảnh, màu sắc, và bất kỳ văn bản nào có trong ảnh.",
+            image_data={"mime_type": mime_type, "data": b64_data},
+        )
+
+        # Lưu image context
+        if user_id not in _document_store:
+            _document_store[user_id] = {
+                "text": "",
+                "filename": "",
+                "format": "",
+                "char_count": 0,
+                "truncated": False,
+            }
+        _document_store[user_id]["image_context"] = description
+        _document_store[user_id]["image_filename"] = filename
+
+        print(f"[API] Image uploaded: {filename} for user {user_id}")
+
+        return {
+            "success": True,
+            "filename": filename,
+            "description": description[:500],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Lỗi upload image: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý ảnh: {str(e)}")
 
 
 # === Voice Endpoints (TTS & STT) ===

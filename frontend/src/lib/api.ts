@@ -198,3 +198,32 @@ export async function getDocumentStatus(userId: string = "default_user"): Promis
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+// === Image Upload ===
+
+export interface ImageUploadResult {
+  success: boolean;
+  filename: string;
+  description: string;
+}
+
+/**
+ * Upload ảnh (PNG, JPG, JPEG, GIF, WEBP)
+ * Backend dùng Gemini Vision để mô tả nội dung ảnh
+ */
+export async function uploadImage(file: File, userId: string = "default_user"): Promise<ImageUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/upload/image?user_id=${encodeURIComponent(userId)}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Upload error" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  return res.json();
+}

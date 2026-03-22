@@ -55,10 +55,12 @@ class GeminiClient:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
+        image_data: Optional[dict] = None,
     ) -> str:
         """
         Gọi Gemini 1.5 Flash cho tác vụ nhanh.
         Dùng cho: Trích xuất dữ liệu, thu thập tin tức, phân tích yêu cầu.
+        Hỗ trợ Vision: truyền image_data={"mime_type": "...", "data": "<base64>"}.
         """
         config = types.GenerateContentConfig(
             temperature=0.3,
@@ -68,9 +70,21 @@ class GeminiClient:
         if system_instruction:
             config.system_instruction = system_instruction
 
+        # Build contents — text-only hoặc multimodal (text + image)
+        if image_data:
+            contents = [
+                types.Part.from_bytes(
+                    data=__import__("base64").b64decode(image_data["data"]),
+                    mime_type=image_data["mime_type"],
+                ),
+                prompt,
+            ]
+        else:
+            contents = prompt
+
         response = self._client.models.generate_content(
             model=self.settings.gemini_flash_model,
-            contents=prompt,
+            contents=contents,
             config=config,
         )
         return response.text

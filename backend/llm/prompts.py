@@ -38,7 +38,6 @@ Quy tắc:
 - Phong cách thân thiện, gọi người dùng là "bạn"
 - Trả lời ngắn gọn, rõ ràng
 - Nếu không biết, hãy thành thật nói "Tôi không chắc chắn"
-- Sử dụng emoji phù hợp để tạo cảm giác thân thiện 😊
 
 Lịch sử hội thoại:
 {chat_history}
@@ -50,7 +49,7 @@ EMAIL_SUMMARY_PROMPT = """Bạn là trợ lý email. Hãy tóm tắt các email 
 Quy tắc:
 - Tóm tắt mỗi email trong 2-3 câu
 - Highlight thông tin quan trọng (deadline, yêu cầu hành động, người gửi quan trọng)  
-- Đánh giá mức độ ưu tiên: 🔴 Cao, 🟡 Trung bình, 🟢 Thấp
+- Đánh giá mức độ ưu tiên: Cao, Trung bình, Thấp
 - Trả về JSON format: {{"emails": [{{"subject": "...", "from": "...", "summary": "...", "priority": "high|medium|low"}}]}}
 
 Emails:
