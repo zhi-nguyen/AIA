@@ -128,16 +128,17 @@ async def handle_word_automation(data: dict) -> dict:
                 key_lower = str(key).lower()
                 clean_key = str(key).replace("_", " ").title()
                 
-                if key_lower == "title":
+                if key_lower == "title" or key_lower == "tieu de" or key_lower == "tiêu đề":
                     doc.add_heading(str(value), level=0)
-                elif key_lower == "subtitle":
+                elif key_lower == "subtitle" or key_lower == "phu de" or key_lower == "phụ đề":
                     doc.add_heading(str(value), level=1)
-                elif "title" in key_lower:
+                elif "title" in key_lower or "tieu de" in key_lower or "tiêu đề" in key_lower:
                     doc.add_heading(str(value), level=2)
                 else:
                     # Thoroughly hide generic structural JSON keys from being printed as Headings
                     hide_heading = False
-                    for hide_word in ["content", "body", "description", "conclusion", "author", "section", "paragraph", "data"]:
+                    vn_en_structural_keys = ["content", "body", "description", "conclusion", "author", "section", "paragraph", "data", "noi dung", "nội dung", "mo dau", "mở đầu", "ket luan", "kết luận", "nguoi", "người", "phan", "phần", "muc", "mục", "tac gia", "tác giả"]
+                    for hide_word in vn_en_structural_keys:
                         if hide_word in key_lower:
                             hide_heading = True
                             break
