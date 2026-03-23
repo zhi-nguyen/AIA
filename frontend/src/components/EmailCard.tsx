@@ -5,6 +5,8 @@
 
 "use client";
 
+import { AlertCircle, AlertTriangle, ArrowDownCircle } from "lucide-react";
+
 interface EmailCardProps {
   subject: string;
   from: string;
@@ -14,9 +16,9 @@ interface EmailCardProps {
 
 export default function EmailCard({ subject, from, summary, priority }: EmailCardProps) {
   const priorityIcon = {
-    high: "🔴",
-    medium: "🟡",
-    low: "🟢",
+    high: <AlertCircle className="text-red-500 w-4 h-4 inline" />,
+    medium: <AlertTriangle className="text-yellow-500 w-4 h-4 inline" />,
+    low: <ArrowDownCircle className="text-green-500 w-4 h-4 inline" />,
   };
 
   return (

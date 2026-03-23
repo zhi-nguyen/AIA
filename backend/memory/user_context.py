@@ -22,8 +22,9 @@ def retrieve_user_context(user_id: str) -> str:
     store = get_user_memory_store()
     try:
         result = store.query(
-            query_text=f"Thông tin về người dùng {user_id}",
+            query_text="Thông tin cá nhân, sở thích, và ngữ cảnh hiện tại",
             top_k=5,
+            filters={"user_id": user_id}
         )
         return result if result and result != "Empty Response" else _get_default_context()
     except Exception as e:
@@ -102,8 +103,9 @@ def get_user_profile(user_id: str) -> Optional[dict]:
     store = get_user_memory_store()
     try:
         result = store.query(
-            query_text=f"Thông tin người dùng {user_id}",
+            query_text="Thông tin chi tiết hồ sơ profile",
             top_k=1,
+            filters={"user_id": user_id, "type": "user_profile"}
         )
 
         if not result or result == "Empty Response":
@@ -112,25 +114,25 @@ def get_user_profile(user_id: str) -> Optional[dict]:
         # Parse structured text back to dict
         profile: dict = {"user_id": user_id}
 
-        name_match = re.search(r"- Tên:\s*(.+)", result)
+        name_match = re.search(r"- Tên:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if name_match:
             profile["name"] = name_match.group(1).strip()
 
-        occ_match = re.search(r"- Nghề nghiệp:\s*(.+)", result)
+        occ_match = re.search(r"- Nghề nghiệp:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if occ_match:
             profile["occupation"] = occ_match.group(1).strip()
 
-        interests_match = re.search(r"- Sở thích:\s*(.+)", result)
+        interests_match = re.search(r"- Sở thích:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if interests_match:
             raw = interests_match.group(1).strip()
             profile["interests"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
 
-        news_match = re.search(r"- Nguồn tin ưa thích:\s*(.+)", result)
+        news_match = re.search(r"- Nguồn tin ưa thích:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if news_match:
             raw = news_match.group(1).strip()
             profile["preferred_news_sources"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
 
-        style_match = re.search(r"- Phong cách làm việc:\s*(.+)", result)
+        style_match = re.search(r"- Phong cách làm việc:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if style_match:
             profile["work_style"] = style_match.group(1).strip()
 

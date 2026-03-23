@@ -9,6 +9,25 @@ from google.genai import types
 from typing import Optional
 from config import get_settings
 
+DEFAULT_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+]
+
 
 class GeminiClient:
     """
@@ -40,6 +59,7 @@ class GeminiClient:
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=4096,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -49,30 +69,53 @@ class GeminiClient:
             contents=prompt,
             config=config,
         )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            u = response.usage_metadata
+            print(f"[Tokens Pro] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
         return response.text
 
     def generate_flash(
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
+        image_data: Optional[dict] = None,
+        response_mime_type: Optional[str] = None,
     ) -> str:
         """
         Gọi Gemini 1.5 Flash cho tác vụ nhanh.
         Dùng cho: Trích xuất dữ liệu, thu thập tin tức, phân tích yêu cầu.
+        Hỗ trợ Vision: truyền image_data={"mime_type": "...", "data": "<base64>"}.
         """
         config = types.GenerateContentConfig(
             temperature=0.3,
             top_p=0.9,
             max_output_tokens=2048,
+            response_mime_type=response_mime_type,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
 
+        # Build contents — text-only hoặc multimodal (text + image)
+        if image_data:
+            contents = [
+                types.Part.from_bytes(
+                    data=__import__("base64").b64decode(image_data["data"]),
+                    mime_type=image_data["mime_type"],
+                ),
+                prompt,
+            ]
+        else:
+            contents = prompt
+
         response = self._client.models.generate_content(
             model=self.settings.gemini_flash_model,
-            contents=prompt,
+            contents=contents,
             config=config,
         )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            u = response.usage_metadata
+            print(f"[Tokens Flash] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
         return response.text
 
     def stream_pro(
@@ -88,6 +131,7 @@ class GeminiClient:
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=4096,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -97,6 +141,9 @@ class GeminiClient:
             contents=prompt,
             config=config,
         ):
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                u = chunk.usage_metadata
+                print(f"[Tokens Pro Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
             if chunk.text:
                 yield chunk.text
 
@@ -112,6 +159,7 @@ class GeminiClient:
             temperature=0.3,
             top_p=0.9,
             max_output_tokens=2048,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -121,6 +169,9 @@ class GeminiClient:
             contents=prompt,
             config=config,
         ):
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                u = chunk.usage_metadata
+                print(f"[Tokens Flash Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
             if chunk.text:
                 yield chunk.text
 

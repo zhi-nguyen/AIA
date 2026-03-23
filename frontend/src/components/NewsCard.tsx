@@ -5,6 +5,8 @@
 
 "use client";
 
+import { Newspaper } from "lucide-react";
+
 interface NewsCardProps {
   title: string;
   source: string;
@@ -15,7 +17,7 @@ interface NewsCardProps {
 export default function NewsCard({ title, source, summary, url }: NewsCardProps) {
   return (
     <div className="news-card">
-      <span className="news-card__source">📰 {source}</span>
+      <span className="news-card__source"><Newspaper className="inline w-4 h-4 mr-1" />{source}</span>
       <h3 className="news-card__title">{title}</h3>
       <p className="news-card__summary">{summary}</p>
       <a href={url} target="_blank" rel="noopener noreferrer" className="news-card__link">

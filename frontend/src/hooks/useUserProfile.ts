@@ -24,7 +24,7 @@ const DEFAULT_STATE: ProfileFormState = {
   work_style: "",
 };
 
-export function useUserProfile(userId: string = "default_user") {
+export function useUserProfile() {
   const [profile, setProfile] = useState<ProfileFormState>(DEFAULT_STATE);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -37,7 +37,7 @@ export function useUserProfile(userId: string = "default_user") {
     const load = async () => {
       try {
         setIsLoading(true);
-        const res = await getUserProfile(userId);
+        const res = await getUserProfile();
         if (res.profile) {
           setProfile({
             name: res.profile.name || "",
@@ -56,7 +56,7 @@ export function useUserProfile(userId: string = "default_user") {
       }
     };
     load();
-  }, [userId]);
+  }, []);
 
   const updateField = useCallback(<K extends keyof ProfileFormState>(
     field: K,
@@ -77,7 +77,6 @@ export function useUserProfile(userId: string = "default_user") {
 
     try {
       await createUserProfile({
-        user_id: userId,
         name: profile.name.trim(),
         occupation: profile.occupation.trim(),
         interests: profile.interests,
@@ -95,7 +94,7 @@ export function useUserProfile(userId: string = "default_user") {
     } finally {
       setIsSaving(false);
     }
-  }, [profile, userId]);
+  }, [profile]);
 
   return {
     profile,

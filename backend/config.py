@@ -13,11 +13,12 @@ class Settings(BaseSettings):
 
     # === Vertex AI ===
     vertex_project_id: str = "xiaoyue-api"
-    vertex_location: str = "us-central1"
+    vertex_location: str = "global"
     vertex_credentials_path: str = os.path.join(os.path.dirname(__file__), "xiaoyue-api-key.json")
 
     # === Database ===
     database_url: str = "postgresql://aia_user:aia_secret_2024@localhost:5433/aia_db"
+    encryption_key: str = "AIA_SUPER_SECRET_KEY_FOR_FERNET_32_BYTES"
 
     # === Gmail OAuth2 (Phase 3) ===
     gmail_client_id: str = ""
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
 
     # === LLM Settings ===
     gemini_pro_model: str = "gemini-2.5-pro"
-    gemini_flash_model: str = "gemini-2.5-flash"
+    gemini_flash_model: str = "gemini-2.5-pro"
 
     # === Voice (TTS & STT) ===
     tts_model: str = "gemini-2.5-flash-tts"
