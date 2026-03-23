@@ -162,7 +162,10 @@ def search_google_news(query: str, limit: int = 10, lang: str = "vi") -> list[di
     print(f"[NewsTools] Searching Google News: {search_query}")
     
     try:
-        feed = feedparser.parse(url)
+        import httpx
+        # Sử dụng httpx để có cơ chế timeout chặn việc bị block vô thời hạn (Hanging)
+        resp = httpx.get(url, timeout=10.0, follow_redirects=True)
+        feed = feedparser.parse(resp.content)
         articles = []
 
         for entry in feed.entries[:limit]:
@@ -205,7 +208,10 @@ def fetch_rss_news(feed_url: str, source_name: str, limit: int = 5) -> list[dict
     Fetch tin tức từ một RSS feed cố định.
     """
     try:
-        feed = feedparser.parse(feed_url)
+        import httpx
+        # Tránh lỗi treo vô thời hạn khi gọi rss không phản hồi
+        resp = httpx.get(feed_url, timeout=10.0, follow_redirects=True)
+        feed = feedparser.parse(resp.content)
         articles = []
 
         for entry in feed.entries[:limit]:
@@ -238,30 +244,26 @@ def fetch_rss_news(feed_url: str, source_name: str, limit: int = 5) -> list[dict
         return []
 
 
-def fetch_news(query: str = "", limit: int = 10) -> list[dict]:
+def fetch_news(query: str = "", limit: int = 10, is_extracted_query: bool = False) -> list[dict]:
     """
     Fetch tin tức — tự động chọn chiến lược:
     
-    1. Nếu query có keyword cụ thể (VD: "Chiến sự Trung Đông")
-       → Tìm kiếm qua Google News RSS
-       
-    2. Nếu query chung chung (VD: "tin tức hôm nay")
-       → Lấy từ RSS feeds cố định theo topic
+    1. Nếu is_extracted_query=True: Trực tiếp tìm bằng keyword trên Google News RSS
+    2. Nếu is_extracted_query=False: Dùng RSS mặc định (cho câu hỏi chung chung)
     """
     all_articles = []
 
-    if query and _has_specific_keyword(query):
+    if is_extracted_query and query:
         # === Chiến lược 1: Tìm kiếm theo keyword ===
-        search_keywords = _extract_search_keywords(query)
-        print(f"[NewsTools] Strategy: SEARCH with keywords: '{search_keywords}'")
+        print(f"[NewsTools] Strategy: SEARCH with keywords: '{query}'")
         
         # Tìm trên Google News (tiếng Việt)
-        articles = search_google_news(search_keywords, limit=limit, lang="vi")
+        articles = search_google_news(query, limit=limit, lang="vi")
         all_articles.extend(articles)
 
         # Nếu không đủ kết quả, thử tiếng Anh
         if len(all_articles) < 3:
-            en_articles = search_google_news(search_keywords, limit=5, lang="en")
+            en_articles = search_google_news(query, limit=5, lang="en")
             all_articles.extend(en_articles)
 
     else:
@@ -273,7 +275,8 @@ def fetch_news(query: str = "", limit: int = 10) -> list[dict]:
         per_feed_limit = max(limit // len(feeds), 3)
         for source_name, feed_url in feeds:
             articles = fetch_rss_news(feed_url, source_name, limit=per_feed_limit)
-            all_articles.extend(articles)
+            if articles:
+                all_articles.extend(articles)
 
     print(f"[NewsTools] Total articles fetched: {len(all_articles)}")
     return all_articles[:limit]
@@ -303,8 +306,10 @@ def summarize_news(articles: list[dict], query: str, user_preferences: str = "")
         articles=articles_text,
     )
 
+    print(f"[NewsTools] Bắt đầu gọi Agent summarize cho {len(articles)} bài báo...")
     try:
-        response = client.generate_flash(prompt)
+        response = client.generate_flash(prompt, response_mime_type="application/json")
+        print(f"[NewsTools] Summarize response received, length: {len(response)}")
 
         # Parse JSON
         clean = response.strip()
@@ -312,10 +317,36 @@ def summarize_news(articles: list[dict], query: str, user_preferences: str = "")
             match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", clean, re.DOTALL)
             if match:
                 clean = match.group(1).strip()
+        else:
+            # Fallback for models like gemini-2.5-pro that might not use backticks
+            start = clean.find('{')
+            end = clean.rfind('}')
+            if start != -1 and end != -1:
+                clean = clean[start:end+1]
 
         try:
             return json.loads(clean)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as decode_err:
+            print(f"[NewsTools] Lỗi JSONDecode Error trong Summarize: {decode_err}\nRaw output: {clean[:200]}")
+            
+            # --- Tự cứu (Best Effort Extract) dành cho JSON bị cắt ngang ---
+            extracted_summary = ""
+            # Tìm "summary": "..." một cách lỏng lẻo
+            m = re.search(r'"summary"\s*:\s*"([^"]+)"', response)
+            if m:
+                extracted_summary = m.group(1)
+            else:
+                # Trường hợp bị cắt đứt giữa chừng chưa đóng ngoặc kép
+                m_partial = re.search(r'"summary"\s*:\s*"([^"]*)', response)
+                if m_partial:
+                    extracted_summary = m_partial.group(1) + "..."
+            
+            if extracted_summary:
+                return {
+                    "summary": extracted_summary,
+                    "sources": [{"title": a["title"], "source": a["source"], "url": a["url"]} for a in articles[:5]]
+                }
+
             return {
                 "news": [
                     {

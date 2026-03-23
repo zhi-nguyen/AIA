@@ -114,25 +114,25 @@ def get_user_profile(user_id: str) -> Optional[dict]:
         # Parse structured text back to dict
         profile: dict = {"user_id": user_id}
 
-        name_match = re.search(r"- Tên:\s*(.+)", result)
+        name_match = re.search(r"- Tên:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if name_match:
             profile["name"] = name_match.group(1).strip()
 
-        occ_match = re.search(r"- Nghề nghiệp:\s*(.+)", result)
+        occ_match = re.search(r"- Nghề nghiệp:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if occ_match:
             profile["occupation"] = occ_match.group(1).strip()
 
-        interests_match = re.search(r"- Sở thích:\s*(.+)", result)
+        interests_match = re.search(r"- Sở thích:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if interests_match:
             raw = interests_match.group(1).strip()
             profile["interests"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
 
-        news_match = re.search(r"- Nguồn tin ưa thích:\s*(.+)", result)
+        news_match = re.search(r"- Nguồn tin ưa thích:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if news_match:
             raw = news_match.group(1).strip()
             profile["preferred_news_sources"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
 
-        style_match = re.search(r"- Phong cách làm việc:\s*(.+)", result)
+        style_match = re.search(r"- Phong cách làm việc:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if style_match:
             profile["work_style"] = style_match.group(1).strip()
 

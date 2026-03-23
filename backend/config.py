@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # === Vertex AI ===
     vertex_project_id: str = "xiaoyue-api"
-    vertex_location: str = "us-central1"
+    vertex_location: str = "global"
     vertex_credentials_path: str = os.path.join(os.path.dirname(__file__), "xiaoyue-api-key.json")
 
     # === Database ===
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # === LLM Settings ===
     gemini_pro_model: str = "gemini-2.5-pro"
-    gemini_flash_model: str = "gemini-2.5-flash"
+    gemini_flash_model: str = "gemini-2.5-pro"
 
     # === Voice (TTS & STT) ===
     tts_model: str = "gemini-2.5-flash-tts"

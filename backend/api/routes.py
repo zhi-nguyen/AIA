@@ -80,7 +80,6 @@ class ChatResponse(BaseModel):
 
 class UserProfileRequest(BaseModel):
     """Request body cho user profile initialization"""
-    user_id: str
     name: str
     occupation: str = ""
     interests: list[str] = []

@@ -70,8 +70,8 @@ Tin tức thu thập được:
 
 Quy tắc QUAN TRỌNG:
 1. Viết MỘT ĐOẠN VĂN duy nhất (paragraph) tổng hợp TẤT CẢ các tin tức, nối các chủ đề với nhau một cách tự nhiên.
-2. Đoạn văn phải chứa THÔNG TIN CỤ THỂ từ các bài báo (số liệu, tên người, sự kiện). KHÔNG được viết chung chung.
-3. Phong cách: ngắn gọn, súc tích, như một bản tin tổng hợp nhanh. Mỗi chủ đề chỉ cần 1-2 câu.
+2. TUYỆT ĐỐI không sao chép nguyên văn (copy-paste) từ bài báo để tránh lỗi kiểm duyệt. Hãy ĐỌC HIỂU và tự DIỄN ĐẠT LẠI bằng giọng văn của bạn.
+3. Đoạn văn tóm tắt cần chi tiết, đầy đủ ngữ cảnh (3-5 câu cho mỗi chủ đề), KHÔNG được viết quá ngắn.
 4. Ngoài đoạn văn, trả về danh sách nguồn tin (title, source, url) để hiển thị link bên dưới.
 5. Trả về CHÍNH XÁC cấu trúc JSON sau:
 
@@ -97,6 +97,9 @@ Ví dụ:
 
 - Input: "Cập nhật tin tức AI và Bitcoin"
   Output: {{"queries": ["Tin tức AI trí tuệ nhân tạo", "Bitcoin tiền điện tử"]}}
+
+- Input: "Có tin gì về AI hôm nay không?"
+  Output: {{"queries": ["Tin tức AI trí tuệ nhân tạo"]}}
 
 - Input: "Có tin gì mới không?"
   Output: {{"queries": []}}

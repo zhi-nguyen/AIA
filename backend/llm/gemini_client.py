@@ -9,6 +9,25 @@ from google.genai import types
 from typing import Optional
 from config import get_settings
 
+DEFAULT_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+]
+
 
 class GeminiClient:
     """
@@ -40,6 +59,7 @@ class GeminiClient:
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=4096,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -59,6 +79,7 @@ class GeminiClient:
         prompt: str,
         system_instruction: Optional[str] = None,
         image_data: Optional[dict] = None,
+        response_mime_type: Optional[str] = None,
     ) -> str:
         """
         Gọi Gemini 1.5 Flash cho tác vụ nhanh.
@@ -69,6 +90,8 @@ class GeminiClient:
             temperature=0.3,
             top_p=0.9,
             max_output_tokens=2048,
+            response_mime_type=response_mime_type,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -108,6 +131,7 @@ class GeminiClient:
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=4096,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction
@@ -135,6 +159,7 @@ class GeminiClient:
             temperature=0.3,
             top_p=0.9,
             max_output_tokens=2048,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
             config.system_instruction = system_instruction

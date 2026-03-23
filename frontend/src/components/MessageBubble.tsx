@@ -6,51 +6,120 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "@/hooks/useChat";
 import { synthesizeSpeech } from "@/lib/api";
-import { Volume2, Square, Hourglass, User, Bot } from "lucide-react";
+import { Volume2, Square, Hourglass, User, Bot, Play, Pause } from "lucide-react";
 
 interface MessageBubbleProps {
   message: Message;
+  ttsVolume?: number;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({ message, ttsVolume = 1.0 }: MessageBubbleProps) {
   const isUser = message.role === "user";
-  const [isTTSPlaying, setIsTTSPlaying] = useState(false);
-  const [isTTSLoading, setIsTTSLoading] = useState(false);
+  type TTSState = "idle" | "loading" | "playing" | "paused";
+  const [ttsState, setTtsState] = useState<TTSState>("idle");
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Auto-generate TTS in background when AI message is complete
+  useEffect(() => {
+    let isMounted = true;
+    if (!isUser && message.content && !message.isLoading && !audioUrl) {
+      setTtsState("loading");
+      synthesizeSpeech(message.content)
+        .then((blob) => {
+          if (!isMounted) return;
+          const url = URL.createObjectURL(blob);
+          setAudioUrl(url);
+          setTtsState("idle");
+        })
+        .catch((err) => {
+          console.error("Auto TTS generation error:", err);
+          if (isMounted) setTtsState("idle");
+        });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [isUser, message.content, message.isLoading]);
+
+  // Update volume dynamically
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = ttsVolume;
+    }
+  }, [ttsVolume]);
+
+  // Cleanup audio object
+  useEffect(() => {
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [audioUrl]);
 
   // Phát TTS cho tin nhắn AI
-  const handlePlayTTS = async () => {
-    if (isTTSPlaying || isTTSLoading || !message.content) return;
+  const handleTogglePlay = async () => {
+    if (ttsState === "loading" || !message.content) return;
 
-    setIsTTSLoading(true);
-    try {
-      const audioBlob = await synthesizeSpeech(message.content);
-      const url = URL.createObjectURL(audioBlob);
-      const audio = new Audio(url);
-
-      audio.onplay = () => {
-        setIsTTSLoading(false);
-        setIsTTSPlaying(true);
-      };
-      audio.onended = () => {
-        setIsTTSPlaying(false);
-        URL.revokeObjectURL(url);
-      };
-      audio.onerror = () => {
-        setIsTTSPlaying(false);
-        setIsTTSLoading(false);
-        URL.revokeObjectURL(url);
-      };
-
-      await audio.play();
-    } catch {
-      setIsTTSLoading(false);
-      setIsTTSPlaying(false);
+    if (ttsState === "playing") {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setTtsState("paused");
+      }
+      return;
     }
+
+    if (ttsState === "paused") {
+      if (audioRef.current) {
+        audioRef.current.play();
+        setTtsState("playing");
+      }
+      return;
+    }
+
+    try {
+      let playUrl = audioUrl;
+      
+      if (!playUrl) {
+        setTtsState("loading");
+        const blob = await synthesizeSpeech(message.content);
+        playUrl = URL.createObjectURL(blob);
+        setAudioUrl(playUrl);
+      }
+
+      if (!audioRef.current) {
+        const audio = new Audio(playUrl);
+        audio.volume = ttsVolume;
+        audioRef.current = audio;
+
+        audio.onended = () => setTtsState("idle");
+        audio.onerror = () => setTtsState("idle");
+      }
+
+      setTtsState("playing");
+      await audioRef.current.play();
+    } catch (err) {
+      console.error(err);
+      setTtsState("idle");
+    }
+  };
+
+  const handleStopTTS = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setTtsState("idle");
   };
 
   // Route badge
@@ -118,17 +187,32 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                 })}
               </div>
 
-              {/* TTS Button — chỉ hiện cho tin nhắn AI */}
+              {/* TTS Controls — chỉ hiện cho tin nhắn AI */}
               {!isUser && message.content && (
-                <button
-                  id={`tts-btn-${message.id}`}
-                  className={`tts-btn ${isTTSPlaying ? "tts-btn--playing" : ""} ${isTTSLoading ? "tts-btn--loading" : ""}`}
-                  onClick={handlePlayTTS}
-                  disabled={isTTSPlaying || isTTSLoading}
-                  title={isTTSPlaying ? "Đang phát..." : isTTSLoading ? "Đang tải..." : "Phát giọng nói"}
-                >
-                  {isTTSLoading ? <Hourglass size={16} /> : isTTSPlaying ? <Square size={16} className="fill-current" /> : <Volume2 size={16} />}
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    id={`tts-btn-${message.id}`}
+                    className={`tts-btn ${ttsState === "playing" ? "tts-btn--playing" : ""} ${ttsState === "loading" ? "tts-btn--loading" : ""}`}
+                    onClick={handleTogglePlay}
+                    disabled={ttsState === "loading"}
+                    title={ttsState === "playing" ? "Tạm dừng" : ttsState === "loading" ? "Đang tải..." : ttsState === "paused" ? "Tiếp tục" : "Phát giọng nói"}
+                  >
+                    {ttsState === "loading" ? <Hourglass size={16} /> : 
+                     ttsState === "playing" ? <Pause size={16} className="fill-current" /> : 
+                     ttsState === "paused" ? <Play size={16} className="fill-current" /> : 
+                     <Volume2 size={16} />}
+                  </button>
+
+                  {(ttsState === "playing" || ttsState === "paused") && (
+                    <button
+                      className="tts-btn"
+                      onClick={handleStopTTS}
+                      title="Dừng hẳn"
+                    >
+                      <Square size={16} className="fill-current" />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </>

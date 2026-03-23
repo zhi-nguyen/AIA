@@ -55,11 +55,11 @@ def _extract_news_queries(user_message: str) -> list[str]:
         return []
 
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"[NewsAgent] JSON parse failed: {e}, fallback to raw message")
-        return [user_message]
+        print(f"[NewsAgent] JSON parse failed: {e}, fallback to generic RSS")
+        return []
     except Exception as e:
-        print(f"[NewsAgent] Intent extraction error: {e}, fallback to raw message")
-        return [user_message]
+        print(f"[NewsAgent] Intent extraction error: {e}, fallback to generic RSS")
+        return []
 
 
 def _deduplicate_articles(articles: list[dict]) -> list[dict]:
@@ -105,12 +105,12 @@ def news_node(state: AgentState) -> dict:
         if queries:
             for query in queries:
                 print(f"[NewsAgent] Fetching news for query: '{query}'")
-                articles = fetch_news(query=query, limit=ARTICLES_PER_QUERY)
+                articles = fetch_news(query=query, limit=ARTICLES_PER_QUERY, is_extracted_query=True)
                 all_articles.extend(articles)
         else:
             # Câu hỏi chung chung → lấy tổng cộng 3-5 bài từ RSS
             print("[NewsAgent] Generic question, fetching default RSS feeds")
-            all_articles = fetch_news(query=last_message, limit=5)
+            all_articles = fetch_news(query=last_message, limit=5, is_extracted_query=False)
 
         # === Bước 3: Loại trùng ===
         all_articles = _deduplicate_articles(all_articles)
@@ -163,9 +163,13 @@ def _format_synthesized_response(
 
     Nếu Gemini trả format cũ ({"news": [...]}) hoặc parse fail → fallback.
     """
-    # --- Trường hợp 1: Format mới (summary + sources) ---
-    paragraph = summary_result.get("summary", "")
-    sources = summary_result.get("sources", [])
+    # --- Trường hợp 1: Format mới (summary + sources) hoặc Fallback (raw_summary) ---
+    paragraph = (
+        summary_result.get("summary", "") 
+        or summary_result.get("response", "") 
+        or summary_result.get("raw_summary", "")
+    )
+    sources = summary_result.get("sources", []) or summary_result.get("source", [])
 
     # --- Trường hợp 2: Fallback từ format cũ (news array) ---
     if not paragraph and "news" in summary_result:
@@ -199,7 +203,7 @@ def _format_synthesized_response(
     # Danh sách nguồn tin
     if sources:
         response_parts.append("---")
-        response_parts.append("**📰 Nguồn tin:**")
+        response_parts.append("**Nguồn tin:**")
         for i, src in enumerate(sources, 1):
             title = src.get("title", "Không có tiêu đề")
             source_name = src.get("source", "")

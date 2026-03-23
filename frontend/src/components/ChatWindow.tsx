@@ -13,7 +13,7 @@ import { useVoice } from "@/hooks/useVoice";
 import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2 } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -41,6 +41,7 @@ export default function ChatWindow() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [ttsVolume, setTtsVolume] = useState<number>(1.0);
 
   // Pending file (preview trước khi gửi)
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -206,6 +207,19 @@ export default function ChatWindow() {
           </div>
         </div>
         <div className="chat-header__actions">
+          {/* TTS Volume Control */}
+          <div className="flex items-center mr-4" title="Âm lượng đọc tự động (TTS)">
+            <Volume2 size={16} className="mr-1 opacity-70" />
+            <input 
+              type="range" 
+              min="0" 
+              max="1" 
+              step="0.1" 
+              value={ttsVolume} 
+              onChange={(e) => setTtsVolume(parseFloat(e.target.value))} 
+              style={{ width: "60px", cursor: "pointer" }}
+            />
+          </div>
           <button
             className="chat-header__btn"
             onClick={async () => {
@@ -290,7 +304,7 @@ export default function ChatWindow() {
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble key={msg.id} message={msg} ttsVolume={ttsVolume} />
         ))}
 
         {/* Error messages */}
