@@ -14,10 +14,13 @@ from llm.gemini_client import get_gemini_client
 from llm.prompts import GENERAL_CHAT_PROMPT
 from langchain_core.messages import HumanMessage
 
+import json
+from agents.router import _extract_json
+from tools.local_tools import trigger_local_word, trigger_local_excel
 
-def general_chat_node(state: AgentState) -> dict:
+async def general_chat_node(state: AgentState) -> dict:
     """
-    Node General Chat - Trả lời các câu hỏi chung.
+    Node General Chat - Trả lời các câu hỏi chung và chạy lệnh công cụ cục bộ.
     Dùng Gemini Pro cho chất lượng trả lời tốt.
     """
     client = get_gemini_client()
@@ -28,6 +31,9 @@ def general_chat_node(state: AgentState) -> dict:
         if isinstance(msg, HumanMessage) or (hasattr(msg, "type") and msg.type == "human"):
             last_message = msg.content if hasattr(msg, "content") else str(msg)
             break
+
+    # Lấy user id để gọi công cụ
+    user_id = state.get("user_id", "default_user")
 
     # Tạo chat history string
     chat_history = ""
@@ -42,6 +48,26 @@ def general_chat_node(state: AgentState) -> dict:
     )
 
     response = client.generate_pro(last_message, system_instruction=system_prompt)
+    
+    # Kiểm tra xem AI có yêu cầu chạy tool cục bộ không
+    extracted_json = _extract_json(response)
+    if extracted_json and "action" in extracted_json:
+        action = extracted_json["action"]
+        data = extracted_json.get("data", {})
+        
+        try:
+            if action == "trigger_local_word":
+                template = data.get("template", "contract")
+                word_data = data.get("data", {})
+                result = await trigger_local_word(user_id, template, word_data)
+                return {"final_response": "Đã gửi yêu cầu cấp phát Word script tới máy của bạn. Hãy xác nhận trên máy tính.", "tool_results": result}
+            
+            elif action == "trigger_local_excel":
+                result = await trigger_local_excel(user_id, data)
+                return {"final_response": "Đã gửi yêu cầu xuất file Excel. Hãy kiểm tra máy tính của bạn.", "tool_results": result}
+        except Exception as e:
+            return {"final_response": f"Có lỗi xảy ra khi thực thi công cụ cục bộ: {str(e)}"}
+
     return {"final_response": response}
 
 

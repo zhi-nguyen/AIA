@@ -218,7 +218,6 @@ def summarize_emails(emails: list[dict]) -> dict:
         print(f"[EmailTools] Lỗi summarize: {e}")
         return {"emails": [], "error": str(e)}
 
-
 def check_gmail_configured() -> bool:
     """Kiểm tra Gmail API đã được cấu hình chưa"""
     return os.path.exists(CREDENTIALS_PATH)

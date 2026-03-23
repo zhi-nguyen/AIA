@@ -460,3 +460,57 @@ async def graph_info():
         "flow": "START → memory_injector → router → [email|news|general] → END",
         "version": "Phase 5 - Voice (TTS & STT)",
     }
+
+# === Agent Client Endpoints ===
+
+from fastapi.responses import StreamingResponse
+
+@router.get("/agent/download")
+async def download_agent_script(user_id: str = Depends(get_current_user_id)) -> StreamingResponse:
+    """
+    Tạo và tải xuống agent bundle (ZIP) bao gồm AIA_Agent.exe và config.json cho user.
+    """
+    import os
+    import uuid
+    import io
+    import json
+    import zipfile
+    from api.websocket import manager
+
+    # Generate a unique token for this session
+    token = str(uuid.uuid4())
+    manager.agent_tokens[user_id] = token
+
+    # Check if the compiled executable exists
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    exe_path = os.path.join(script_dir, "static", "AIA_Agent.exe")
+    
+    if not os.path.exists(exe_path):
+        raise HTTPException(status_code=404, detail="AIA_Agent.exe not found on server")
+        
+    # Generate config.json content
+    config_dict = {
+        "user_id": user_id,
+        "user_token": token,
+        "server_url": "ws://localhost:8000/api/v1/ws/agent"
+    }
+    config_json = json.dumps(config_dict, indent=4)
+
+    # Create ZIP archive in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+        # Write config.json
+        zip_file.writestr("config.json", config_json)
+        # Add the agent executable
+        zip_file.write(exe_path, "AIA_Agent.exe")
+
+    zip_buffer.seek(0)
+
+    # Return as downloadable ZIP archive
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="AIA_Setup.zip"'
+        }
+    )

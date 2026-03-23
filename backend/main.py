@@ -100,5 +100,7 @@ async def auth_callback(request: Request):
 
 # === Import routes (sẽ mở rộng dần) ===
 from api.routes import router as api_router
+from api.websocket import router as ws_router
 
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(ws_router, prefix="/api/v1")

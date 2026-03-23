@@ -245,3 +245,36 @@ export async function uploadImage(file: File): Promise<ImageUploadResult> {
 
   return res.json();
 }
+/**
+ * Tải xuống script Local Agent
+ */
+export async function downloadAgentScript(): Promise<void> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/agent/download`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Download failed" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = url;
+
+  let filename = "AIA_Setup.zip";
+  const disposition = res.headers.get("Content-Disposition");
+  if (disposition && disposition.includes("attachment")) {
+    const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+    const matches = filenameRegex.exec(disposition);
+    if (matches != null && matches[1]) {
+      filename = matches[1].replace(/['"]/g, "");
+    }
+  }
+
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}

@@ -10,10 +10,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
-import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, type UploadResult } from "@/lib/api";
+import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, downloadAgentScript, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2 } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -247,6 +247,22 @@ export default function ChatWindow() {
           >
             <Settings size={20} />
           </button>
+          {userRole === "member" && (
+            <button
+              className="chat-header__btn"
+              onClick={async () => {
+                try {
+                  await downloadAgentScript();
+                } catch (err) {
+                  console.error("Download agent script error:", err);
+                  alert("Lỗi khi tải xuống kịch bản AIA Agent.\nVui lòng chắc chắn bạn đã cấp quyền và đăng nhập.");
+                }
+              }}
+              title="Tải xuống AIA Local Agent Script"
+            >
+              <Download size={20} />
+            </button>
+          )}
           <button
             className="chat-header__btn"
             onClick={clearMessages}
