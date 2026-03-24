@@ -46,6 +46,12 @@ class ConnectionManager:
             return True
         return False
 
+    async def send_to_web(self, user_id: str, message: Dict[str, Any]) -> bool:
+        if user_id in self.active_web_clients:
+            await self.active_web_clients[user_id].send_json(message)
+            return True
+        return False
+
 manager = ConnectionManager()
 
 @router.websocket("/ws/agent/{user_id}")

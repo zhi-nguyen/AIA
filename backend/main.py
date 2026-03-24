@@ -28,6 +28,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# === Redis Pub/Sub Link ===
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    import json
+    import redis.asyncio as aioredis
+    from celery_app import redis_url
+    from api.websocket import manager
+
+    async def listen_to_redis():
+        try:
+            client = aioredis.from_url(redis_url)
+            pubsub = client.pubsub()
+            await pubsub.subscribe("aia_ws_messages")
+            print("[Backend] Đã đăng ký lắng nghe Redis channel: aia_ws_messages")
+            
+            while True:
+                try:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        try:
+                            data = json.loads(message["data"])
+                            user_id = data.get("user_id")
+                            if user_id:
+                                # Forward message to WebSocket clients
+                                await manager.send_to_web(user_id, data)
+                                await manager.send_to_agent(user_id, data)
+                        except Exception as e:
+                            print(f"[Redis Listener Parse Error] {e}")
+                except Exception as e:
+                    print(f"[Redis Get Message Error] {e}")
+                
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            print(f"[Redis Listener Connection Error] {e}")
+
+    asyncio.create_task(listen_to_redis())
+
+
 
 # === Health Check ===
 @app.get("/health")

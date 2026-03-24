@@ -4,6 +4,7 @@ import json
 import logging
 import tkinter as tk
 from tkinter import messagebox
+import tkinter.simpledialog as simpledialog
 import os
 import subprocess
 import platform
@@ -248,12 +249,41 @@ async def execute_action(data: dict) -> dict:
     else:
         return {"status": "error", "message": f"Unknown action: {action}"}
 
+def prompt_for_new_token():
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    messagebox.showwarning("Connection Failed", "Connection failed 5 times. The token may have expired or was modified. Please generate a new token from the web interface and enter it here.", parent=root)
+    new_token = simpledialog.askstring("Input", "Enter new AIA Agent token:", parent=root)
+    root.destroy()
+    return new_token
+
+def update_config(new_token):
+    global TOKEN, WS_URL
+    if not new_token:
+        return
+    TOKEN = new_token
+    base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        config["user_token"] = new_token
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4)
+        WS_URL = f"{SERVER_URL}/{USER_ID}?token={TOKEN}"
+        logging.info("Token updated successfully.")
+    except Exception as e:
+        logging.error(f"Failed to update config.json: {e}")
+
 async def agent_loop() -> None:
+    retry_count = 0
     while True:
         try:
             logging.info(f"Connecting to {WS_URL}...")
             async with websockets.connect(WS_URL) as ws:
                 logging.info("Connected to AIA Backend!")
+                retry_count = 0
                 while True:
                     message: str = await ws.recv()
                     data: dict = json.loads(message)
@@ -273,11 +303,20 @@ async def agent_loop() -> None:
         
         except websockets.exceptions.ConnectionClosedError as e:
             logging.error(f"WebSocket connection closed unexpectedly: {e}")
+        except websockets.exceptions.InvalidStatusCode as e:
+            logging.error(f"WebSocket auth failed: {e}")
         except ConnectionRefusedError:
             logging.error("Connection refused. Is the backend running?")
         except Exception as e:
             logging.error(f"Unexpected error: {e}")
             
+        retry_count += 1
+        if retry_count >= 5:
+            new_token = prompt_for_new_token()
+            if new_token:
+                update_config(new_token)
+            retry_count = 0
+
         logging.info("Retrying in 5 seconds...")
         await asyncio.sleep(5)
 

@@ -45,10 +45,15 @@ export interface GraphInfo {
 
 // === API Functions ===
 
+export interface SendMessageResponse {
+  task_id: string;
+  status: string;
+}
+
 /**
  * Gửi tin nhắn đến AI và nhận response
  */
-export async function sendMessage(request: ChatRequest): Promise<ChatResponse> {
+export async function sendMessage(request: ChatRequest): Promise<SendMessageResponse> {
   const res = await fetchWithAuth(`${API_BASE_URL}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -135,7 +140,46 @@ export async function synthesizeSpeech(text: string): Promise<Blob> {
     throw new Error(error.detail || `HTTP ${res.status}`);
   }
 
-  return res.blob();
+  const taskResponse = await res.json();
+  const taskId = taskResponse.task_id;
+
+  return new Promise((resolve, reject) => {
+    const handleTts = async (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const data = customEvent.detail;
+      window.removeEventListener(`tts_response_${taskId}`, handleTts);
+
+      if (data.error) {
+        return reject(new Error(data.error));
+      }
+
+      let base64Str = data.audio_base64;
+      // Remove any whitespace or newlines that might cause atob to fail
+      base64Str = base64Str.replace(/\s+/g, "");
+      // Just in case a data URI prefix was accidentally included
+      base64Str = base64Str.replace(/^data:audio\/\w+;base64,/, "");
+      
+      try {
+        // Use native fetch API to decode base64, much more robust than atob()
+        const fetchRes = await fetch(`data:audio/wav;base64,${base64Str}`);
+        resolve(await fetchRes.blob());
+      } catch (err) {
+        // Fallback robust atob if necessary
+        try {
+          const cleanStr = base64Str.replace(/-/g, '+').replace(/_/g, '/');
+          const binaryStr = window.atob(cleanStr);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          resolve(new Blob([bytes], { type: "audio/wav" }));
+        } catch (atobErr) {
+          reject(atobErr);
+        }
+      }
+    };
+    window.addEventListener(`tts_response_${taskId}`, handleTts);
+  });
 }
 
 /**
@@ -277,4 +321,16 @@ export async function downloadAgentScript(): Promise<void> {
 
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
+}
+
+/**
+ * Tạo token mới cho Local Agent
+ */
+export async function provisionAgentToken(): Promise<{ status: string; token: string }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/agent/token`, { method: "POST" });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Token provisioning failed" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
 }
