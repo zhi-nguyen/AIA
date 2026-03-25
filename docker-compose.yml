@@ -38,9 +38,13 @@ services:
     environment:
       # Override DATABASE_URL để dùng hostname "postgres" trong Docker network
       DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - aia-network
 
@@ -60,6 +64,41 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
     depends_on:
       - backend
+      - redis
+    networks:
+      - aia-network
+
+  # === Redis (Broker for Celery) ===
+  redis:
+    image: redis:7-alpine
+    container_name: aia-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - aia-network
+
+  # === Celery Worker ===
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aia-celery-worker
+    command: celery -A celery_app.celery_app worker --loglevel=info
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - aia-network
 

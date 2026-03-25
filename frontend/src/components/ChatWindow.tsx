@@ -10,10 +10,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
-import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, downloadAgentScript, type UploadResult } from "@/lib/api";
+import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, downloadAgentScript, provisionAgentToken, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -55,6 +55,10 @@ export default function ChatWindow() {
 
   // User state
   const [userRole, setUserRole] = useState<string>("guest");
+
+  // Token modal state
+  const [newAgentToken, setNewAgentToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Khởi tạo/check session khi tải trang
   useEffect(() => {
@@ -263,6 +267,24 @@ export default function ChatWindow() {
               <Download size={20} />
             </button>
           )}
+          {userRole === "member" && (
+            <button
+              className="chat-header__btn"
+              onClick={async () => {
+                try {
+                  const data = await provisionAgentToken();
+                  setNewAgentToken(data.token);
+                  setCopied(false);
+                } catch (err) {
+                  console.error("Provision token error:", err);
+                  alert("Lỗi khi tạo token mới.");
+                }
+              }}
+              title="Tạo User Token mới cho AIA Local Agent"
+            >
+              <Key size={20} />
+            </button>
+          )}
           <button
             className="chat-header__btn"
             onClick={clearMessages}
@@ -433,6 +455,50 @@ export default function ChatWindow() {
       {/* Profile Modal */}
       {showProfile && (
         <UserProfileForm onClose={() => setShowProfile(false)} />
+      )}
+
+      {/* Token Modal */}
+      {newAgentToken && (
+        <div className="profile-overlay" onClick={() => setNewAgentToken(null)}>
+          <div className="profile-modal" onClick={e => e.stopPropagation()}>
+            <div className="profile-modal__header">
+              <div>
+                <h2 className="profile-modal__title">Token mới của bạn</h2>
+                <p className="profile-modal__desc">Nhập token này vào cửa sổ Local Agent hoặc cập nhật trong config.json</p>
+              </div>
+              <button className="profile-modal__close" onClick={() => setNewAgentToken(null)} title="Đóng">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="profile-input" style={{ wordBreak: 'break-all', fontFamily: 'monospace', userSelect: 'all', marginBottom: '8px' }}>
+              {newAgentToken}
+            </div>
+            
+            <div className="profile-actions">
+              <button 
+                type="button" 
+                className="profile-cancel-btn"
+                onClick={() => setNewAgentToken(null)}
+              >
+                Đóng
+              </button>
+              <button 
+                type="button" 
+                className="profile-save-btn"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => {
+                  navigator.clipboard.writeText(newAgentToken);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+              >
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+                {copied ? "Đã Copy!" : "Copy Token"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -78,6 +78,11 @@ class ChatResponse(BaseModel):
     route_reasoning: Optional[str] = None
 
 
+class TaskResponse(BaseModel):
+    task_id: str
+    status: str
+
+
 class UserProfileRequest(BaseModel):
     """Request body cho user profile initialization"""
     name: str
@@ -94,44 +99,22 @@ class TTSRequest(BaseModel):
 
 # === Chat Endpoint ===
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=TaskResponse)
 async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
     """
-    Endpoint chính để giao tiếp với AI.
+    Endpoint chính để giao tiếp với AI. Offloaded to Celery.
     """
     try:
-        graph = get_compiled_graph()
-
-        # Khởi tạo state ban đầu (dùng empty string thay vì None)
         user_store = _document_store.get(user_id, {})
         doc_context = user_store.get("text", "")
         image_context = user_store.get("image_context", "")
-        combined_context = doc_context
-        if image_context:
-            combined_context += f"\n\n[Ảnh đã upload: {user_store.get('image_filename', 'ảnh')}]\n{image_context}"
+        image_filename = user_store.get('image_filename', 'ảnh')
 
-        initial_state = {
-            "messages": [HumanMessage(content=request.message)],
-            "user_id": user_id,
-            "user_context": "",
-            "route": "",
-            "route_reasoning": "",
-            "tool_results": "",
-            "final_response": "",
-            "document_context": combined_context,
-            "error": "",
-        }
-
-        # Chạy graph
-        print(f"[API] Invoking graph with message: {request.message[:100]}")
-        result = await graph.ainvoke(initial_state)
-        print(f"[API] Graph result keys: {list(result.keys())}")
-
-        return ChatResponse(
-            response=result.get("final_response", "Xin lỗi, tôi không thể xử lý yêu cầu này.") or "Xin lỗi, tôi không thể xử lý.",
-            route=result.get("route") or None,
-            route_reasoning=result.get("route_reasoning") or None,
-        )
+        from tasks import process_chat
+        print(f"[API] Dispatching chat task for message: {request.message[:100]}")
+        task = process_chat.delay(user_id, request.message, doc_context, image_context, image_filename)
+        
+        return TaskResponse(task_id=task.id, status="processing")
 
     except Exception as e:
         print(f"[API] Lỗi chat: {e}")
@@ -283,33 +266,37 @@ async def upload_image(file: UploadFile = File(...), user_id: str = Depends(get_
 
 # === Voice Endpoints (TTS & STT) ===
 
-@router.post("/tts")
-async def text_to_speech(request: TTSRequest):
+@router.post("/tts", response_model=TaskResponse)
+async def text_to_speech(request: TTSRequest, user_id: str = Depends(get_current_user_id)):
     """
-    Chuyển đổi text thành audio (WAV).
-    Sử dụng Gemini TTS với giọng Leda (Female, Vietnamese).
+    Chuyển đổi text thành audio (WAV) via Celery.
     """
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text không được để trống")
 
     try:
-        from services.tts_service import synthesize_speech
-
-        audio_bytes = synthesize_speech(request.text)
-
-        return StreamingResponse(
-            io.BytesIO(audio_bytes),
-            media_type="audio/wav",
-            headers={
-                "Content-Disposition": "inline; filename=tts_output.wav",
-                "Content-Length": str(len(audio_bytes)),
-            },
-        )
+        from tasks import generate_tts
+        task = generate_tts.delay(user_id, request.text)
+        return TaskResponse(task_id=task.id, status="processing")
 
     except Exception as e:
         print(f"[API] Lỗi TTS: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Lỗi TTS: {str(e)}")
+
+@router.get("/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """Kiểm tra trạng thái Celery task."""
+    from celery.result import AsyncResult
+    from celery_app import celery_app
+    
+    res = AsyncResult(task_id, app=celery_app)
+    if res.state == 'SUCCESS':
+        return {"status": "completed", "result": res.result}
+    elif res.state == 'FAILURE':
+        return {"status": "failed", "error": str(res.info)}
+    else:
+        return {"status": "processing"}
 
 
 @router.post("/stt")
@@ -464,6 +451,15 @@ async def graph_info():
 # === Agent Client Endpoints ===
 
 from fastapi.responses import StreamingResponse
+
+@router.post("/agent/token")
+async def provision_agent_token(user_id: str = Depends(get_current_user_id)):
+    """Tạo và cấp mới token cho Local Agent"""
+    import uuid
+    from api.websocket import manager
+    token = str(uuid.uuid4())
+    manager.agent_tokens[user_id] = token
+    return {"status": "ok", "token": token}
 
 @router.get("/agent/download")
 async def download_agent_script(user_id: str = Depends(get_current_user_id)) -> StreamingResponse:
