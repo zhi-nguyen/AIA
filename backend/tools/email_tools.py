@@ -24,8 +24,11 @@ from googleapiclient.discovery import build
 from llm.gemini_client import get_gemini_client
 from llm.prompts import EMAIL_SUMMARY_PROMPT
 
-# Gmail API scopes - chỉ đọc email
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Gmail API scopes - đọc + gửi email
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
 
 # Đường dẫn file credentials và token
 CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "credentials.json")
@@ -228,3 +231,55 @@ async def check_gmail_authorized(user_id: str) -> bool:
     from services.db_service import get_google_credentials
     creds = await get_google_credentials(user_id)
     return bool(creds and creds.get("encrypted_access_token"))
+
+
+async def send_email(
+    user_id: str,
+    subject: str,
+    body: str,
+    recipients: list[str],
+) -> dict:
+    """
+    Gửi email qua Gmail API.
+
+    Args:
+        user_id: ID người dùng (để lấy OAuth credentials)
+        subject: Tiêu đề email
+        body: Nội dung email (plain text)
+        recipients: Danh sách email người nhận
+
+    Returns:
+        {"success": True, "message_id": "..."} hoặc {"success": False, "error": "..."}
+    """
+    from email.mime.text import MIMEText
+    import base64
+
+    try:
+        service = await _get_gmail_service(user_id)
+
+        # Tạo MIME message
+        message = MIMEText(body, "plain", "utf-8")
+        message["to"] = ", ".join(recipients)
+        message["subject"] = subject
+
+        # Encode thành base64url
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
+        # Gửi email
+        sent = (
+            service.users()
+            .messages()
+            .send(userId="me", body={"raw": raw})
+            .execute()
+        )
+
+        msg_id = sent.get("id", "")
+        print(f"[EmailTools] ✅ Email sent successfully. ID: {msg_id}")
+        return {"success": True, "message_id": msg_id}
+
+    except ValueError as e:
+        print(f"[EmailTools] ❌ Auth error: {e}")
+        return {"success": False, "error": f"Chưa kết nối Gmail: {e}"}
+    except Exception as e:
+        print(f"[EmailTools] ❌ Send email error: {e}")
+        return {"success": False, "error": str(e)}

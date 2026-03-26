@@ -13,6 +13,8 @@ import { useVoice } from "@/hooks/useVoice";
 import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, downloadAgentScript, provisionAgentToken, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
+import ProposalCard from "@/components/EmailCard";
+import { useProposals } from "@/hooks/useProposals";
 import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check } from "lucide-react";
 
 // Image extensions
@@ -35,6 +37,7 @@ function formatFileSize(bytes: number): string {
 
 export default function ChatWindow() {
   const { messages, isLoading, error, send, clearMessages } = useChat();
+  const { proposals, approveProposal, dismissProposal } = useProposals();
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   const [input, setInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
@@ -498,6 +501,20 @@ export default function ChatWindow() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Proposal Toast Stack */}
+      {proposals.length > 0 && (
+        <div className="proposal-toast-container">
+          {proposals.map(proposal => (
+            <ProposalCard 
+              key={proposal.id}
+              proposal={proposal}
+              onApprove={approveProposal}
+              onDismiss={dismissProposal}
+            />
+          ))}
         </div>
       )}
     </div>

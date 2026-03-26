@@ -102,6 +102,27 @@ services:
     networks:
       - aia-network
 
+  # === Celery Beat (Periodic Task Scheduler) ===
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aia-celery-beat
+    command: celery -A celery_app.celery_app beat --loglevel=info
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - aia-network
+
 volumes:
   pgvector_data:
     driver: local

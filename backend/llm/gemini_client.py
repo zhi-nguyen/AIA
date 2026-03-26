@@ -175,6 +175,36 @@ class GeminiClient:
             if chunk.text:
                 yield chunk.text
 
+    def generate_search_grounded(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+    ) -> str:
+        """
+        Gọi Gemini Flash với Google Search Grounding.
+        Dùng cho: Tìm kiếm tin tức real-time, fact-checking với dữ liệu web mới nhất.
+        """
+        google_search_tool = types.Tool(google_search=types.GoogleSearch())
+        config = types.GenerateContentConfig(
+            tools=[google_search_tool],
+            temperature=0.3,
+            top_p=0.9,
+            max_output_tokens=8192,
+            safety_settings=DEFAULT_SAFETY_SETTINGS,
+        )
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        response = self._client.models.generate_content(
+            model=self.settings.gemini_flash_model,
+            contents=prompt,
+            config=config,
+        )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            u = response.usage_metadata
+            print(f"[Tokens Search Grounded] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+        return response.text
+
 
 # === Singleton instance ===
 _client: Optional[GeminiClient] = None

@@ -97,6 +97,12 @@ class TTSRequest(BaseModel):
     text: str
 
 
+class ExecuteProposalRequest(BaseModel):
+    """Request body cho execute-proposal endpoint"""
+    subject: str
+    body: str
+    recipients: list[str]
+
 # === Chat Endpoint ===
 
 @router.post("/chat", response_model=TaskResponse)
@@ -386,7 +392,7 @@ async def get_google_auth_url(user_id: str = Depends(get_current_user_id)):
     from google_auth_oauthlib.flow import Flow
     from fastapi import HTTPException
     
-    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "openid", "https://www.googleapis.com/auth/userinfo.email"]
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     creds_path = os.path.join(script_dir, 'credentials.json')
     
@@ -510,3 +516,30 @@ async def download_agent_script(user_id: str = Depends(get_current_user_id)) -> 
             "Content-Disposition": 'attachment; filename="AIA_Setup.zip"'
         }
     )
+
+# === Proposal Execution Endpoint ===
+
+@router.post("/execute-proposal")
+async def execute_proposal(
+    request: ExecuteProposalRequest,
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    Thực thi proposal: Gửi email qua Gmail API.
+    """
+    from tools.email_tools import send_email
+
+    if not request.recipients:
+        raise HTTPException(status_code=400, detail="Danh sách người nhận trống")
+
+    result = await send_email(
+        user_id=user_id,
+        subject=request.subject,
+        body=request.body,
+        recipients=request.recipients
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Lỗi gửi email"))
+
+    return {"status": "success", "message_id": result.get("message_id")}

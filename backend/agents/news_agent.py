@@ -4,6 +4,7 @@ news_agent.py - News Agent Node
 Xử lý các yêu cầu liên quan đến tin tức.
 Hỗ trợ intent recognition: tách câu hỏi đa chủ đề thành nhiều search queries.
 Output: 1 đoạn văn tổng hợp + danh sách nguồn tin bên dưới.
++ Phase 7: Proactive Recommendation — generate_proposal_for_user()
 """
 
 import json
@@ -13,8 +14,9 @@ from typing import Optional
 
 from agents.state import AgentState
 from llm.gemini_client import get_gemini_client
-from llm.prompts import NEWS_INTENT_PROMPT
-from tools.news_tools import fetch_news, summarize_news
+from llm.prompts import NEWS_INTENT_PROMPT, PROPOSAL_SYSTEM_PROMPT
+from tools.news_tools import fetch_news, summarize_news, search_vertex_store, parse_gemini_json
+from memory.user_context import get_user_profile
 from langchain_core.messages import HumanMessage
 
 
@@ -215,3 +217,110 @@ def _format_synthesized_response(
                 response_parts.append(f"{i}. {title}{source_tag}")
 
     return "\n".join(response_parts)
+
+
+# ============================================================
+# === Phase 7: Proactive Recommendation — Proposal Generator ===
+# ============================================================
+
+def generate_proposal_for_user(user_id: str) -> Optional[dict]:
+    """
+    Tạo đề xuất hành động (Action Proposal) dựa trên:
+    1. Profile người dùng (vai trò, sở thích)
+    2. Tin tức liên quan từ Vertex AI Search
+    3. Gemini tổng hợp thành email proposal
+
+    Args:
+        user_id: ID người dùng
+
+    Returns:
+        Dict proposal hoặc None nếu không có đề xuất
+    """
+    # === Bước 1: Lấy profile người dùng ===
+    profile = get_user_profile(user_id)
+    if not profile:
+        print(f"[Proposal] ⚠️ No profile found for user: {user_id}")
+        return None
+
+    user_name = profile.get("name", "Người dùng")
+    user_role = profile.get("occupation", "Cán bộ bệnh viện")
+    interests = profile.get("interests", [])
+    news_sources = profile.get("preferred_news_sources", [])
+
+    print(f"[Proposal] 👤 User: {user_name}, Role: {user_role}, Interests: {interests}")
+
+    # === Bước 2: Tìm tin tức liên quan từ Vertex Search ===
+    search_queries = interests + news_sources
+    if not search_queries:
+        search_queries = ["tin tức công nghệ kinh tế mới nhất"]
+
+    all_news: list[dict] = []
+    for query in search_queries:
+        results = search_vertex_store(query=query, top_k=5)
+        all_news.extend(results)
+
+    if not all_news:
+        print(f"[Proposal] ⚠️ No relevant news found in Vertex Search")
+        return None
+
+    # Loại trùng theo ID
+    seen_ids: set[str] = set()
+    unique_news: list[dict] = []
+    for news in all_news:
+        nid = news.get("id", "")
+        if nid and nid not in seen_ids:
+            seen_ids.add(nid)
+            unique_news.append(news)
+        elif not nid:
+            unique_news.append(news)
+    unique_news = unique_news[:15]  # Giới hạn 15 tin để AI tự xử lý lọc
+
+    print(f"[Proposal] 📰 Found {len(unique_news)} unique news items")
+
+    # === Bước 3: Format news context cho prompt ===
+    news_context_parts: list[str] = []
+    for i, news in enumerate(unique_news, 1):
+        meta = news.get("metadata", {})
+        tag = meta.get("tag", "")
+        source = meta.get("source", "")
+        news_context_parts.append(
+            f"--- Tin {i} ---\n"
+            f"Tiêu đề: {news.get('title', '')}\n"
+            f"Nội dung: {news.get('content', '')[:500]}\n"
+            f"Chủ đề: {tag}\n"
+            f"Nguồn: {source}"
+        )
+    news_context = "\n\n".join(news_context_parts)
+
+    # === Bước 4: Gọi Gemini để tạo proposal ===
+    client = get_gemini_client()
+    prompt = PROPOSAL_SYSTEM_PROMPT.format(
+        user_name=user_name,
+        user_role=user_role,
+        user_interests=", ".join(interests) if interests else "Chung",
+        news_context=news_context,
+    )
+
+    try:
+        response = client.generate_flash(prompt)
+        print(f"[Proposal] 🤖 Gemini response length: {len(response)}")
+
+        # Parse JSON
+        proposals = parse_gemini_json(response)
+        if not proposals:
+            print(f"[Proposal] ⚠️ Failed to parse proposal JSON")
+            return None
+
+        proposal = proposals[0]
+
+        # Nếu Gemini trả no_action → bỏ qua
+        if proposal.get("type") == "no_action":
+            print(f"[Proposal] ℹ️ No action needed: {proposal.get('reason', '')}")
+            return None
+
+        print(f"[Proposal] ✅ Generated proposal: {proposal.get('title', '')[:60]}")
+        return proposal
+
+    except Exception as e:
+        print(f"[Proposal] ❌ Error generating proposal: {e}")
+        return None

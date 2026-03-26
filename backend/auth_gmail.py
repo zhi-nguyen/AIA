@@ -7,7 +7,7 @@ from google.auth.transport.requests import Request
 # Cho phép dùng http://localhost thay vì bắt buộc https://
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 def main():
     creds = None

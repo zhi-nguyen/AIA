@@ -1,34 +1,77 @@
-/**
- * EmailCard.tsx - Component hiển thị thẻ tóm tắt email (Phase 3)
- * Placeholder cho Phase 3
- */
-
 "use client";
 
-import { AlertCircle, AlertTriangle, ArrowDownCircle } from "lucide-react";
+import { CheckCircle2, Clock, Send, X, AlertCircle } from "lucide-react";
+import type { Proposal } from "@/hooks/useProposals";
 
-interface EmailCardProps {
-  subject: string;
-  from: string;
-  summary: string;
-  priority: "high" | "medium" | "low";
+interface ProposalCardProps {
+  proposal: Proposal;
+  onApprove: (id: string) => void;
+  onDismiss: (id: string) => void;
 }
 
-export default function EmailCard({ subject, from, summary, priority }: EmailCardProps) {
-  const priorityIcon = {
-    high: <AlertCircle className="text-red-500 w-4 h-4 inline" />,
-    medium: <AlertTriangle className="text-yellow-500 w-4 h-4 inline" />,
-    low: <ArrowDownCircle className="text-green-500 w-4 h-4 inline" />,
-  };
+export default function ProposalCard({ proposal, onApprove, onDismiss }: ProposalCardProps) {
+  const { id, title, summary, payload, status, error, timestamp } = proposal;
 
   return (
-    <div className="email-card">
-      <div className="email-card__header">
-        <span className="email-card__priority">{priorityIcon[priority]}</span>
-        <span className="email-card__from">{from}</span>
+    <div className="proposal-card">
+      <div className="proposal-card__header">
+        <span className="proposal-card__badge">Đề xuất tự động</span>
+        <button 
+          className="proposal-card__close"
+          onClick={() => onDismiss(id)}
+          title="Bỏ qua"
+        >
+          <X size={16} />
+        </button>
       </div>
-      <h3 className="email-card__subject">{subject}</h3>
-      <p className="email-card__summary">{summary}</p>
+
+      <h3 className="proposal-card__title">{title}</h3>
+      <p className="proposal-card__summary">{summary}</p>
+      
+      <div className="proposal-card__details">
+        <div className="proposal-card__field">
+          <strong>Tiêu đề:</strong> {payload.subject}
+        </div>
+        <div className="proposal-card__field">
+          <strong>Người nhận:</strong> {payload.recipients.join(", ")}
+        </div>
+        <div className="proposal-card__body-preview">
+          {payload.body.substring(0, 150)}{payload.body.length > 150 ? "..." : ""}
+        </div>
+      </div>
+
+      <div className="proposal-card__actions">
+        {status === "pending" && (
+          <button 
+            className="proposal-btn proposal-btn--approve"
+            onClick={() => onApprove(id)}
+          >
+            <Send size={16} />
+            Duyệt & Gửi Ngay
+          </button>
+        )}
+        
+        {status === "sending" && (
+          <button className="proposal-btn proposal-btn--sending" disabled>
+            <Clock size={16} className="animate-spin" />
+            Đang gửi...
+          </button>
+        )}
+        
+        {status === "sent" && (
+          <button className="proposal-btn proposal-btn--success" disabled>
+            <CheckCircle2 size={16} />
+            Đã gửi thành công
+          </button>
+        )}
+
+        {status === "error" && (
+          <div className="proposal-error">
+            <AlertCircle size={14} />
+            {error || "Lỗi khi gửi email"}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

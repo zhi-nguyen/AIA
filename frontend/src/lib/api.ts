@@ -334,3 +334,24 @@ export async function provisionAgentToken(): Promise<{ status: string; token: st
   }
   return res.json();
 }
+
+/**
+ * Execute a proposal (send email)
+ */
+export async function executeProposal(payload: {
+  subject: string;
+  body: string;
+  recipients: string[];
+}): Promise<{ status: string; message_id?: string }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/execute-proposal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to execute proposal" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
