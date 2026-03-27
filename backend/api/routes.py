@@ -543,3 +543,4 @@ async def execute_proposal(
         raise HTTPException(status_code=500, detail=result.get("error", "Lỗi gửi email"))
 
     return {"status": "success", "message_id": result.get("message_id")}
+

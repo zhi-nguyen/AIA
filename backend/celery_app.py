@@ -7,7 +7,7 @@ celery_app = Celery(
     "aia_worker",
     broker=redis_url,
     backend=redis_url,
-    include=["tasks"]
+    include=["tasks"]  # chat, TTS tasks only
 )
 
 celery_app.conf.update(
@@ -18,16 +18,6 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     broker_connection_retry_on_startup=True,
-    beat_schedule={
-        "auto-ingest-news-every-6h": {
-            "task": "tasks.auto_ingest_news",
-            "schedule": 6 * 60 * 60,  # Every 6 hours (21600 seconds)
-            "args": ["default_user"],
-        },
-        "generate-proposals-every-6h": {
-            "task": "tasks.generate_user_proposals",
-            "schedule": 6 * 60 * 60,  # Every 6 hours
-            "args": ["default_user"],
-        },
-    },
+    # Note: beat_schedule has been moved to crawler/celery_beat_app.py
+    # Main worker only handles: tasks.process_chat, tasks.generate_tts
 )

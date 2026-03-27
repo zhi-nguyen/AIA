@@ -36,7 +36,6 @@ services:
     env_file:
       - .env
     environment:
-      # Override DATABASE_URL để dùng hostname "postgres" trong Docker network
       DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
       REDIS_URL: redis://redis:6379/0
       PYTHONPATH: /app
@@ -58,7 +57,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend/src:/app/src           # Hot-reload: mount source code
+      - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
@@ -68,7 +67,7 @@ services:
     networks:
       - aia-network
 
-  # === Redis (Broker for Celery) ===
+  # === Redis (Broker for Celery + PubSub) ===
   redis:
     image: redis:7-alpine
     container_name: aia-redis
@@ -78,22 +77,22 @@ services:
     networks:
       - aia-network
 
-  # === Celery Worker ===
+  # ── Main Celery Worker (chat + TTS tasks only) ────────────────────────────
   celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: aia-celery-worker
-    command: celery -A celery_app.celery_app worker --loglevel=info
+    command: celery -A celery_app.celery_app worker --loglevel=info -Q celery
     restart: unless-stopped
     volumes:
       - ./backend:/app
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
       REDIS_URL: redis://redis:6379/0
       PYTHONPATH: /app
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,24 +101,53 @@ services:
     networks:
       - aia-network
 
-  # === Celery Beat (Periodic Task Scheduler) ===
-  celery-beat:
+  # ── Crawler Worker (auto_ingest_news + generate_user_proposals) ───────────
+  # Processes tasks dispatched by crawler-beat via the "crawler" queue.
+  crawler-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: aia-celery-beat
-    command: celery -A celery_app.celery_app beat --loglevel=info
+      context: .             # project root — so Dockerfile can COPY both crawler/ and backend/
+      dockerfile: crawler/Dockerfile.crawler
+    container_name: aia-crawler-worker
+    command: >
+      celery -A celery_beat_app.crawler_celery_app worker
+      --loglevel=info -Q crawler --concurrency=2
     restart: unless-stopped
     volumes:
-      - ./backend:/app
-    environment:
-      DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
-      REDIS_URL: redis://redis:6379/0
-      PYTHONPATH: /app
+      - ./crawler:/crawler
+      - ./backend:/backend      # shared backend modules (llm/, agents/, tools/, memory/)
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /crawler:/backend
     depends_on:
       - redis
+    networks:
+      - aia-network
+
+  # ── Crawler Beat Scheduler ────────────────────────────────────────────────
+  # Triggers auto_ingest_news and generate_user_proposals every 6 hours.
+  # Only one instance of this service should run at a time.
+  crawler-beat:
+    build:
+      context: .             # project root — so Dockerfile can COPY both crawler/ and backend/
+      dockerfile: crawler/Dockerfile.crawler
+    container_name: aia-crawler-beat
+    command: >
+      celery -A celery_beat_app.crawler_celery_app beat
+      --loglevel=info
+    restart: unless-stopped
+    volumes:
+      - ./crawler:/crawler
+      - ./backend:/backend      # shared backend modules
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /crawler:/backend
+    depends_on:
+      - redis
+      - crawler-worker
     networks:
       - aia-network
 

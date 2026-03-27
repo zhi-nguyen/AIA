@@ -430,7 +430,6 @@ def push_to_vertex_search(document: dict, data_store_id: str = None) -> bool:
     """
     from google.cloud import discoveryengine_v1 as discoveryengine
     from google.oauth2 import service_account
-    from google.protobuf import struct_pb2
     from config import get_settings
 
     settings = get_settings()
@@ -455,21 +454,24 @@ def push_to_vertex_search(document: dict, data_store_id: str = None) -> bool:
             branch="default_branch",
         )
 
-        # Build document struct
-        doc_struct = struct_pb2.Struct()
-        doc_struct.update({
-            "title": document.get("title", ""),
-            "content": document.get("content", ""),
-            "metadata": document.get("metadata", {}),
-        })
+        # Build document: content as raw bytes, metadata as struct_data
+        metadata = document.get("metadata", {})
 
         doc = discoveryengine.Document(
             id=document.get("id", ""),
-            json_data=json.dumps({
+            content=discoveryengine.Document.Content(
+                raw_bytes=document.get("content", "").encode("utf-8"),
+                mime_type="text/plain",
+            ),
+            struct_data={
                 "title": document.get("title", ""),
-                "content": document.get("content", ""),
-                "metadata": document.get("metadata", {}),
-            }),
+                "metadata": {
+                    "source": metadata.get("source", "Unknown"),
+                    "tag": metadata.get("tag", "General"),
+                    "url": metadata.get("url", ""),
+                    "published": metadata.get("published", ""),
+                },
+            },
         )
 
         result = client.create_document(
@@ -478,30 +480,39 @@ def push_to_vertex_search(document: dict, data_store_id: str = None) -> bool:
             document_id=document.get("id", ""),
         )
 
-        print(f"[NewsTools] ✅ Pushed to data store: {document.get('title', '')[:60]}")
+        print(f"[NewsTools] Pushed to data store: {document.get('title', '')[:60]}")
         return True
 
     except Exception as e:
-        # Nếu document đã tồn tại (ALREADY_EXISTS), thử update thay vì create
+        # If document already exists (ALREADY_EXISTS), try update instead of create
         if "ALREADY_EXISTS" in str(e) or "409" in str(e):
             try:
                 doc_name = f"{parent}/documents/{document.get('id', '')}"
+                metadata = document.get("metadata", {})
                 doc = discoveryengine.Document(
                     name=doc_name,
-                    json_data=json.dumps({
+                    content=discoveryengine.Document.Content(
+                        raw_bytes=document.get("content", "").encode("utf-8"),
+                        mime_type="text/plain",
+                    ),
+                    struct_data={
                         "title": document.get("title", ""),
-                        "content": document.get("content", ""),
-                        "metadata": document.get("metadata", {}),
-                    }),
+                        "metadata": {
+                            "source": metadata.get("source", "Unknown"),
+                            "tag": metadata.get("tag", "General"),
+                            "url": metadata.get("url", ""),
+                            "published": metadata.get("published", ""),
+                        },
+                    },
                 )
                 client.update_document(document=doc)
-                print(f"[NewsTools] 🔄 Updated existing doc: {document.get('title', '')[:60]}")
+                print(f"[NewsTools] Updated existing doc: {document.get('title', '')[:60]}")
                 return True
             except Exception as update_err:
-                print(f"[NewsTools] ❌ Update failed: {update_err}")
+                print(f"[NewsTools] Update failed: {update_err}")
                 return False
 
-        print(f"[NewsTools] ❌ Push to data store failed: {e}")
+        print(f"[NewsTools] Push to data store failed: {e}")
         return False
 
 
@@ -552,22 +563,34 @@ def search_vertex_store(query: str, top_k: int = 10, data_store_id: str = None) 
             doc = result.document
             doc_data: dict = {}
 
-            # Trích xuất từ json_data (string JSON)
+            # Read from json_data (string JSON) first
             if doc.json_data:
                 try:
                     doc_data = json.loads(doc.json_data)
                 except json.JSONDecodeError:
                     pass
 
-            # Fallback: trích xuất từ struct_data
+            # Fallback: read from struct_data (used in NO_CONTENT stores)
             if not doc_data and doc.struct_data:
                 doc_data = dict(doc.struct_data)
+
+            # Rebuild metadata: support both flat-struct and nested metadata
+            if "metadata" in doc_data and hasattr(doc_data["metadata"], "items"):
+                metadata = dict(doc_data["metadata"])
+            else:
+                # Fields stored flat by push_to_vertex_search in NO_CONTENT mode
+                metadata = {
+                    "tag": doc_data.get("tag", ""),
+                    "source": doc_data.get("source", ""),
+                    "url": doc_data.get("url", ""),
+                    "published": doc_data.get("published", ""),
+                }
 
             results.append({
                 "id": doc.id or "",
                 "title": doc_data.get("title", ""),
                 "content": doc_data.get("content", ""),
-                "metadata": doc_data.get("metadata", {}),
+                "metadata": metadata,
             })
 
         print(f"[NewsTools] 🔍 Vertex Search returned {len(results)} results for: '{query[:50]}'")

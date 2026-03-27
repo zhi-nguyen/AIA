@@ -129,3 +129,4 @@ def router_node(state: AgentState) -> dict:
         print(f"[Router] Lỗi: {e}")
         route = _classify_by_keywords(last_message, has_document=has_document)
         return {"route": route, "route_reasoning": f"Fallback do lỗi: {str(e)}"}
+

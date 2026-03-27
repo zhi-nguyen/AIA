@@ -34,3 +34,4 @@ client_secret_*.json
 backend/xiaoyue-api-key.json
 package.json
 backend/data-store-key.json
+/backend/tests
