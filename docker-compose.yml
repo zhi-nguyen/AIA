@@ -77,13 +77,13 @@ services:
     networks:
       - aia-network
 
-  # ── Main Celery Worker (chat + TTS tasks only) ────────────────────────────
+  # ── Main Celery Worker (chat + TTS + email_assistant tasks) ──────────────
   celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: aia-celery-worker
-    command: celery -A celery_app.celery_app worker --loglevel=info -Q celery
+    command: celery -A celery_app.celery_app worker --loglevel=info -Q celery,default
     restart: unless-stopped
     volumes:
       - ./backend:/app
@@ -97,6 +97,34 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+    networks:
+      - aia-network
+
+  # ── Main Celery Beat Scheduler (email_assistant every 15 min) ────────────
+  # Triggers hourly_email_assistant on the main backend Celery app.
+  # IMPORTANT: Only one instance of this service should ever be running.
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aia-celery-beat
+    command: celery -A celery_app.celery_app beat --loglevel=info
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://aia_user:aia_secret_2024@postgres:5432/aia_db
+      REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      celery-worker:
         condition: service_started
     networks:
       - aia-network

@@ -10,6 +10,7 @@ Yêu cầu:
 """
 
 import os
+import re
 import json
 import base64
 from typing import Optional
@@ -24,11 +25,8 @@ from googleapiclient.discovery import build
 from llm.gemini_client import get_gemini_client
 from llm.prompts import EMAIL_SUMMARY_PROMPT
 
-# Gmail API scopes - đọc + gửi email
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-]
+# Gmail API scopes - gmail.modify bao gồm readonly + send + mark as read/unread
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 # Đường dẫn file credentials và token
 CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "credentials.json")
@@ -106,45 +104,134 @@ def _get_header(headers: list, name: str) -> str:
     return ""
 
 
-async def fetch_unread_emails(user_id: str, limit: int = 5) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Tier 2 Filter — Zero-Token Regex Gate
+# ---------------------------------------------------------------------------
+
+# Từ khóa tiếng Việt và tiếng Anh liên quan đến cuộc hẹn / cuộc họ p
+_MEETING_PATTERN = re.compile(
+    r"("
+    # Tiếng Việt
+    r"hẹn|gặp|họ p|hợp|lịch|mời|thời gian|thời điểm"
+    r"|buổi|sáng|chiều|tối|mai|ngày mai|tuần tới|lúc nào"
+    r"|vào lúc|vào ngày|cuối tuần|cuối tháng|chiều nay|sáng nay|tối nay"
+    r"|cuộc hẹn|kế hoạch|thuần tiện|tiện không|có thể gặp"
+    # Tiếng Anh
+    r"|meeting|schedule|appointment|calendar|invite|invitation"
+    r"|call|sync|standup|stand-up|huddle|catch.?up"
+    r"|available|availability|free slot|time slot"
+    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|tomorrow|next week|this week|\d{1,2}[:/h]\d{2}"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def is_potential_meeting(subject: str, body: str) -> bool:
     """
-    Fetch email chưa đọc từ Gmail.
+    Tier 2 Filter: Kiểm tra nhanh bằng Regex xem email có liên quan
+    đến cuộc hẹn / cuộc họ p không.
+    Chi phí: 0 token. Chỳ dùng CPU + Regex.
+
+    Returns:
+        True  — có thể là email hẹn cần Agent phân tích.
+        False — email không liên quan, đánh dấu processed và bỏ qua.
     """
+    text_to_scan = f"{subject} {body[:500]}"
+    return bool(_MEETING_PATTERN.search(text_to_scan))
+
+
+async def fetch_unread_emails(user_id: str, limit: int = 10) -> list[dict]:
+    """
+    Fetch email chưa đọc từ Gmail sau khi áp dụng 2 tầng lọc không tốn token.
+
+    Pipeline:
+        [Gmail API - IDs only]
+            ↓ Tier 1: DB diff — loại Gmail ID đã xử lý trước đó (0 token)
+        [Gmail API - full content]
+            ↓ Tier 2: Regex gate — loại email không liên quan hẹn gặp (0 token)
+        [Emails passed to Agent]
+            → Chỉ email này được gửi đến LLM (tiết kiệm token tối đa)
+    """
+    from services.db_service import get_processed_email_ids, add_processed_email
+
     try:
         service = await _get_gmail_service(user_id)
 
-        # Query email chưa đọc
+        # ---------------------------------------------------------------
+        # Bước 1: Lấy danh sách ID email chưa đọc (chỉ IDs, không lấy nội dung)
+        # ---------------------------------------------------------------
         results = service.users().messages().list(
             userId="me",
             q="is:unread",
             maxResults=limit,
         ).execute()
 
-        messages = results.get("messages", [])
-        if not messages:
+        incoming_ids: list[str] = [
+            msg["id"] for msg in results.get("messages", [])
+        ]
+        if not incoming_ids:
+            print("[EmailTools] Không có email chưa đọc mới.")
             return []
 
-        emails = []
-        for msg_ref in messages:
+        # ---------------------------------------------------------------
+        # Tier 1: DB Diff — Loại bỏ ID đã xử lý trước đó (một lần query DB)
+        # ---------------------------------------------------------------
+        processed_ids: set[str] = await get_processed_email_ids(user_id)
+        new_ids = [gid for gid in incoming_ids if gid not in processed_ids]
+
+        print(
+            f"[EmailTools][Tier1] Tổng IDs: {len(incoming_ids)} │ "
+            f"Mới (chưa xử lý): {len(new_ids)} │ "
+            f"Bỏ qua (Tier1): {len(incoming_ids) - len(new_ids)}"
+        )
+
+        if not new_ids:
+            return []
+
+        # ---------------------------------------------------------------
+        # Bước 2: Lấy nội dung đầy đủ chỉ cho các email MỚI
+        # ---------------------------------------------------------------
+        emails: list[dict] = []
+        tier2_skipped = 0
+
+        for gmail_id in new_ids:
             msg = service.users().messages().get(
                 userId="me",
-                id=msg_ref["id"],
+                id=gmail_id,
                 format="full",
             ).execute()
 
             headers = msg.get("payload", {}).get("headers", [])
-            body = _decode_email_body(msg.get("payload", {}))
+            subject = _get_header(headers, "Subject")
+            body    = _decode_email_body(msg.get("payload", {}))
+            snippet = msg.get("snippet", "")
+
+            # -----------------------------------------------------------
+            # Tier 2: Regex Gate — không liên quan hẹn gặp → bỏ qua
+            # -----------------------------------------------------------
+            if not is_potential_meeting(subject, body or snippet):
+                await add_processed_email(user_id, gmail_id)
+                tier2_skipped += 1
+                print(
+                    f"[EmailTools][Tier2] Bỏ qua (không liên quan hẹn): "
+                    f"id={gmail_id} | subject=\"{subject[:60]}\""
+                )
+                continue
 
             emails.append({
-                "id": msg["id"],
-                "subject": _get_header(headers, "Subject"),
+                "id": gmail_id,
+                "subject": subject,
                 "from": _get_header(headers, "From"),
                 "date": _get_header(headers, "Date"),
-                "snippet": msg.get("snippet", ""),
+                "snippet": snippet,
                 "body": body,
             })
 
-        print(f"[EmailTools] Fetched {len(emails)} unread emails")
+        print(
+            f"[EmailTools] Kết quả: {len(emails)} email đưa vào Agent │ "
+            f"Tier2 bỏ qua: {tier2_skipped}"
+        )
         return emails
 
     except FileNotFoundError as e:
