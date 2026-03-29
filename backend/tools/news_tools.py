@@ -363,3 +363,240 @@ def summarize_news(articles: list[dict], query: str, user_preferences: str = "")
     except Exception as e:
         print(f"[NewsTools] Lỗi summarize: {e}")
         return {"news": [], "error": str(e)}
+
+
+# ============================================================
+# === Vertex AI Search Data Store Ingestion ===
+# ============================================================
+
+def parse_gemini_json(raw_text: str) -> list[dict]:
+    """
+    Trích xuất JSON array từ response text của Gemini.
+    Xử lý: markdown fences, text thừa bao quanh JSON, partial output.
+    """
+    if not raw_text:
+        return []
+
+    clean = raw_text.strip()
+
+    # Bỏ markdown code fences nếu có
+    if "```" in clean:
+        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", clean, re.DOTALL)
+        if match:
+            clean = match.group(1).strip()
+
+    # Tìm JSON array [...] hoặc JSON object {...}
+    first_brace = clean.find("{")
+    first_bracket = clean.find("[")
+    
+    start = -1
+    end = -1
+    
+    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+        # JSON object là ngoài cùng
+        start = first_brace
+        end = clean.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            clean = "[" + clean[start:end + 1] + "]"
+    elif first_bracket != -1:
+        # JSON array là ngoài cùng
+        start = first_bracket
+        end = clean.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            clean = clean[start:end + 1]
+
+    try:
+        data = json.loads(clean, strict=False)
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return [data]
+        return []
+    except json.JSONDecodeError as e:
+        print(f"[NewsTools] parse_gemini_json error: {e}\nRaw: {clean[:300]}")
+        return []
+
+
+def push_to_vertex_search(document: dict, data_store_id: str = None) -> bool:
+    """
+    Đẩy một document vào Vertex AI Search data store.
+    
+    Args:
+        document: Dict chứa ít nhất {"id", "title", "content", "metadata"}
+        data_store_id: ID của data store (mặc định lấy từ config)
+    
+    Returns:
+        True nếu thành công, False nếu thất bại
+    """
+    from google.cloud import discoveryengine_v1 as discoveryengine
+    from google.oauth2 import service_account
+    from config import get_settings
+
+    settings = get_settings()
+    ds_id = data_store_id or settings.vertex_search_data_store_id
+    project_id = settings.vertex_project_id
+    location = "global"  # Vertex AI Search data stores mặc định ở global
+
+    try:
+        # Authenticate với data-store-key.json riêng
+        credentials = service_account.Credentials.from_service_account_file(
+            settings.data_store_credentials_path,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+
+        client = discoveryengine.DocumentServiceClient(credentials=credentials)
+
+        # Parent path: projects/{project}/locations/{location}/dataStores/{ds}/branches/default_branch
+        parent = client.branch_path(
+            project=project_id,
+            location=location,
+            data_store=ds_id,
+            branch="default_branch",
+        )
+
+        # Build document: content as raw bytes, metadata as struct_data
+        metadata = document.get("metadata", {})
+
+        doc = discoveryengine.Document(
+            id=document.get("id", ""),
+            content=discoveryengine.Document.Content(
+                raw_bytes=document.get("content", "").encode("utf-8"),
+                mime_type="text/plain",
+            ),
+            struct_data={
+                "title": document.get("title", ""),
+                "metadata": {
+                    "source": metadata.get("source", "Unknown"),
+                    "tag": metadata.get("tag", "General"),
+                    "url": metadata.get("url", ""),
+                    "published": metadata.get("published", ""),
+                },
+            },
+        )
+
+        result = client.create_document(
+            parent=parent,
+            document=doc,
+            document_id=document.get("id", ""),
+        )
+
+        print(f"[NewsTools] Pushed to data store: {document.get('title', '')[:60]}")
+        return True
+
+    except Exception as e:
+        # If document already exists (ALREADY_EXISTS), try update instead of create
+        if "ALREADY_EXISTS" in str(e) or "409" in str(e):
+            try:
+                doc_name = f"{parent}/documents/{document.get('id', '')}"
+                metadata = document.get("metadata", {})
+                doc = discoveryengine.Document(
+                    name=doc_name,
+                    content=discoveryengine.Document.Content(
+                        raw_bytes=document.get("content", "").encode("utf-8"),
+                        mime_type="text/plain",
+                    ),
+                    struct_data={
+                        "title": document.get("title", ""),
+                        "metadata": {
+                            "source": metadata.get("source", "Unknown"),
+                            "tag": metadata.get("tag", "General"),
+                            "url": metadata.get("url", ""),
+                            "published": metadata.get("published", ""),
+                        },
+                    },
+                )
+                client.update_document(document=doc)
+                print(f"[NewsTools] Updated existing doc: {document.get('title', '')[:60]}")
+                return True
+            except Exception as update_err:
+                print(f"[NewsTools] Update failed: {update_err}")
+                return False
+
+        print(f"[NewsTools] Push to data store failed: {e}")
+        return False
+
+
+def search_vertex_store(query: str, top_k: int = 10, data_store_id: str = None) -> list[dict]:
+    """
+    Tìm kiếm tin tức trong Vertex AI Search data store.
+
+    Args:
+        query: Chuỗi tìm kiếm (sở thích / tag của user)
+        top_k: Số document tối đa trả về
+        data_store_id: ID data store (mặc định lấy từ config)
+
+    Returns:
+        Danh sách document dạng [{"id", "title", "content", "metadata"}]
+    """
+    from google.cloud import discoveryengine_v1 as discoveryengine
+    from google.oauth2 import service_account
+    from config import get_settings
+
+    settings = get_settings()
+    ds_id = data_store_id or settings.vertex_search_data_store_id
+    project_id = settings.vertex_project_id
+    location = "global"
+
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            settings.data_store_credentials_path,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+
+        client = discoveryengine.SearchServiceClient(credentials=credentials)
+
+        serving_config = (
+            f"projects/{project_id}/locations/{location}"
+            f"/dataStores/{ds_id}/servingConfigs/default_search"
+        )
+
+        request = discoveryengine.SearchRequest(
+            serving_config=serving_config,
+            query=query,
+            page_size=top_k,
+        )
+
+        response = client.search(request)
+
+        results: list[dict] = []
+        for result in response.results:
+            doc = result.document
+            doc_data: dict = {}
+
+            # Read from json_data (string JSON) first
+            if doc.json_data:
+                try:
+                    doc_data = json.loads(doc.json_data)
+                except json.JSONDecodeError:
+                    pass
+
+            # Fallback: read from struct_data (used in NO_CONTENT stores)
+            if not doc_data and doc.struct_data:
+                doc_data = dict(doc.struct_data)
+
+            # Rebuild metadata: support both flat-struct and nested metadata
+            if "metadata" in doc_data and hasattr(doc_data["metadata"], "items"):
+                metadata = dict(doc_data["metadata"])
+            else:
+                # Fields stored flat by push_to_vertex_search in NO_CONTENT mode
+                metadata = {
+                    "tag": doc_data.get("tag", ""),
+                    "source": doc_data.get("source", ""),
+                    "url": doc_data.get("url", ""),
+                    "published": doc_data.get("published", ""),
+                }
+
+            results.append({
+                "id": doc.id or "",
+                "title": doc_data.get("title", ""),
+                "content": doc_data.get("content", ""),
+                "metadata": metadata,
+            })
+
+        print(f"[NewsTools] 🔍 Vertex Search returned {len(results)} results for: '{query[:50]}'")
+        return results
+
+    except Exception as e:
+        print(f"[NewsTools] ❌ Vertex Search failed: {e}")
+        return []
+

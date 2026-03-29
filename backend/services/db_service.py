@@ -1,6 +1,6 @@
 """
-db_service.py - Quản lý CSDL cho Authentication
-Sử dụng asyncpg để thao tác với users và sessions.
+db_service.py - Quản lý CSDL cho Authentication và Mail Service
+Sử dụng asyncpg để thao tác với users, sessions, processed_emails và pending_events.
 """
 
 import asyncpg
@@ -24,7 +24,7 @@ async def get_db_pool():
     return _pool
 
 async def init_db_tables(pool: asyncpg.Pool):
-    """Tạo bảng users và sessions nếu chưa có."""
+    """Tạo tất cả bảng nếu chưa có: users, sessions, processed_emails, pending_events."""
     async with pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -37,13 +37,35 @@ async def init_db_tables(pool: asyncpg.Pool):
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id VARCHAR(255) PRIMARY KEY,
                 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Bảng lưu gmail_id đã xử lý — dùng cho Bộ lọc Tier 1 (deduplication)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_emails (
+                user_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                gmail_id VARCHAR(255) NOT NULL,
+                PRIMARY KEY (user_id, gmail_id)
+            );
+        """)
+
+        # Bảng lưu các cuộc hẹn đang chờ xác nhận từ người dùng
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_events (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title         TEXT NOT NULL,
+                participants  TEXT[],
+                proposed_time TIMESTAMP WITH TIME ZONE,
+                status        VARCHAR(50) NOT NULL DEFAULT 'pending',
+                created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -122,3 +144,100 @@ async def update_google_credentials(user_id: str, encrypted_access: str, encrypt
             "UPDATE users SET encrypted_access_token = $1, encrypted_refresh_token = $2 WHERE id = $3::uuid",
             encrypted_access, encrypted_refresh, user_id
         )
+
+
+# ---------------------------------------------------------------------------
+# processed_emails helpers — Bộ lọc Tier 1
+# ---------------------------------------------------------------------------
+
+async def add_processed_email(user_id: str, gmail_id: str) -> None:
+    """Đánh dấu một gmail_id là đã xử lý cho user này."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO processed_emails (user_id, gmail_id)
+            VALUES ($1::uuid, $2)
+            ON CONFLICT DO NOTHING
+            """,
+            user_id, gmail_id,
+        )
+
+
+async def is_email_processed(user_id: str, gmail_id: str) -> bool:
+    """Kiểm tra xem gmail_id đã được xử lý chưa (Tier 1 filter)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM processed_emails WHERE user_id = $1::uuid AND gmail_id = $2",
+            user_id, gmail_id,
+        )
+        return row is not None
+
+
+async def get_processed_email_ids(user_id: str) -> set[str]:
+    """Trả về tập hợp tất cả gmail_id đã xử lý của user (một lần truy vấn cho Tier 1)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT gmail_id FROM processed_emails WHERE user_id = $1::uuid",
+            user_id,
+        )
+        return {row["gmail_id"] for row in rows}
+
+
+# ---------------------------------------------------------------------------
+# pending_events helpers — Hàng đợi cuộc hẹn
+# ---------------------------------------------------------------------------
+
+async def create_pending_event(
+    user_id: str,
+    title: str,
+    participants: list[str],
+    proposed_time: datetime | None = None,
+    status: str = "pending",
+) -> str:
+    """Tạo một pending event và trả về UUID của nó."""
+    pool = await get_db_pool()
+    event_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO pending_events (id, user_id, title, participants, proposed_time, status)
+            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+            """,
+            event_id, user_id, title, participants, proposed_time, status,
+        )
+    return event_id
+
+
+async def update_event_status(event_id: str, status: str) -> None:
+    """Cập nhật trạng thái của một pending event (vd: 'confirmed', 'cancelled')."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE pending_events SET status = $1 WHERE id = $2::uuid",
+            status, event_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# User enumeration helper — dùng cho Celery batch task
+# ---------------------------------------------------------------------------
+
+async def get_all_authorized_users() -> list[str]:
+    """
+    Trả về danh sách user_id đã lưu Gmail refresh token (đã cấp phép).
+    Dùng bởi hourly_email_assistant để biết cần quét email của ai.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT user_id::text
+            FROM gmail_tokens
+            WHERE refresh_token IS NOT NULL
+            """
+        )
+        return [str(row["user_id"]) for row in rows]
+

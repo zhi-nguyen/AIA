@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /crawler
+
+# ── System deps ────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python deps ────────────────────────────────────────────────────────────
+# Copy requirements from the crawler subdirectory (context is project root)
+COPY crawler/requirements.crawler.txt .
+RUN pip install --no-cache-dir -r requirements.crawler.txt
+
+# ── Crawler source ─────────────────────────────────────────────────────────
+COPY crawler/ .
+
+# ── Backend shared modules (llm/, agents/, tools/, memory/) ───────────────
+# Build context is project root, so ../backend is now just backend/
+COPY backend/ /backend
+
+ENV PYTHONPATH="/crawler:/backend"
+
+# Default: Beat scheduler.
+# docker-compose overrides this command for the crawler-worker variant.
+CMD ["celery", "-A", "celery_beat_app.crawler_celery_app", "beat", "--loglevel=info"]

@@ -1,9 +1,11 @@
 """
 email_agent.py - Email Agent Node
-Xử lý các yêu cầu liên quan đến email qua Gmail API
+Xử lý các yêu cầu liên quan đến email qua Gmail API.
+Phase 3: Bổ sung process_email_intent() — AI Thư Ký phân tích hẹn gặp.
 """
 
 import json
+from datetime import datetime, timezone, timedelta
 from agents.state import AgentState
 from llm.gemini_client import get_gemini_client
 from tools.email_tools import (
@@ -21,7 +23,7 @@ async def email_node(state: AgentState) -> dict:
     
     Flow:
     1. Kiểm tra Gmail đã cấu hình chưa
-    2. Fetch unread emails
+    2. Fetch unread emails (đã qua Tier 1 + Tier 2 filter)
     3. Tóm tắt bằng Gemini
     4. Trả về response cho user
     """
@@ -103,3 +105,84 @@ async def email_node(state: AgentState) -> dict:
             "final_response": f"Xin lỗi, tôi gặp lỗi khi đọc email: {str(e)}",
             "tool_results": json.dumps({"error": str(e)}),
         }
+
+
+# ---------------------------------------------------------------------------
+# AI Secretary — Meeting Intent Classifier
+# ---------------------------------------------------------------------------
+
+async def process_email_intent(user_id: str, email_data: dict) -> dict | None:
+    """
+    Phase 3: Phân tích một email đã qua Tier 1+2 để xem có phải lời mời hẹn không.
+
+    Pipeline:
+        email_data (subject, body, from, …)
+            ↓ inject real-time timestamp
+        Gemini Flash [response_mime_type="application/json"]
+            ↓ guaranteed JSON contract
+        WebSocket push → UI (type: "NEW_PROPOSAL")
+            ↓
+        add_processed_email() → đánh dấu đã xử lý
+
+    Returns:
+        dict kết quả phân tích nếu thành công, hoặc None nếu lỗi.
+    """
+    from llm.prompts import MEETING_INTENT_PROMPT
+    from services.db_service import add_processed_email
+    from api.websocket import manager
+
+    client = get_gemini_client()
+
+    # Inject múi giờ +07:00 (Việt Nam)
+    vn_tz = timezone(timedelta(hours=7))
+    current_time = datetime.now(vn_tz).strftime("%Y-%m-%dT%H:%M:%S+07:00")
+
+    prompt = MEETING_INTENT_PROMPT.format(
+        current_time=current_time,
+        sender=email_data.get("from", ""),
+        subject=email_data.get("subject", ""),
+        body=email_data.get("body") or email_data.get("snippet", ""),
+    )
+
+    try:
+        # Gọi Flash với chế độ JSON bắt buộc — không bao giờ trả về free-text
+        raw_json = client.generate_flash(
+            prompt=prompt,
+            response_mime_type="application/json",
+        )
+
+        result: dict = json.loads(raw_json)
+        result["gmail_id"] = email_data.get("id", "")
+        result["email_subject"] = email_data.get("subject", "")
+        result["email_from"] = email_data.get("from", "")
+
+        print(
+            f"[EmailAgent][Secretary] gmail_id={result['gmail_id']} | "
+            f"is_invitation={result.get('is_invitation')} | "
+            f"confidence={result.get('confidence', 0):.2f}"
+        )
+
+        # Đẩy kết quả lên UI qua WebSocket nếu client đang kết nối
+        ws_sent = await manager.send_to_web(
+            user_id,
+            {
+                "type": "NEW_PROPOSAL",
+                "source": "email_secretary",
+                "data": result,
+            },
+        )
+        if not ws_sent:
+            print(f"[EmailAgent][Secretary] WebSocket client offline cho user={user_id} — bỏ qua push")
+
+        # Đánh dấu email đã xử lý (dù có gửi WS hay không)
+        await add_processed_email(user_id, email_data.get("id", ""))
+
+        return result
+
+    except json.JSONDecodeError as e:
+        print(f"[EmailAgent][Secretary] JSON parse error: {e} — raw: {raw_json[:200]}")
+        return None
+    except Exception as e:
+        print(f"[EmailAgent][Secretary] Lỗi xử lý email intent: {e}")
+        return None
+

@@ -56,6 +56,9 @@ export function useChat() {
             } else if (data.type === "tts_response") {
               // Dispatch event to app layer for TTS handling
               window.dispatchEvent(new CustomEvent(`tts_response_${data.task_id}`, { detail: data }));
+            } else if (data.type === "new_proposal") {
+              // Dispatch event for useProposals hook
+              window.dispatchEvent(new CustomEvent("proposal_received", { detail: data }));
             }
           } catch (e) {
             console.error("WS Parse Error", e);

@@ -99,6 +99,7 @@ class TTSRequest(BaseModel):
 
 # === Chat Endpoint ===
 
+
 @router.post("/chat", response_model=TaskResponse)
 async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
     """
@@ -386,7 +387,7 @@ async def get_google_auth_url(user_id: str = Depends(get_current_user_id)):
     from google_auth_oauthlib.flow import Flow
     from fastapi import HTTPException
     
-    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "openid", "https://www.googleapis.com/auth/userinfo.email"]
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     creds_path = os.path.join(script_dir, 'credentials.json')
     
@@ -510,3 +511,69 @@ async def download_agent_script(user_id: str = Depends(get_current_user_id)) -> 
             "Content-Disposition": 'attachment; filename="AIA_Setup.zip"'
         }
     )
+
+# === Proposal Execution Endpoint ===
+
+class ExecuteProposalRequest(BaseModel):
+    """Request body cho execute-proposal endpoint (Phase 4)"""
+    subject: str
+    body: str
+    recipients: list[str]
+    # AI Secretary fields (optional — sent when action_type == create_event / reply_email)
+    event_id: Optional[str] = None          # gmail_id của email gốc
+    proposed_time: Optional[str] = None     # ISO 8601 datetime (from suggested_actions payload)
+    participants: Optional[list[str]] = None  # sẽ ghi vào pending_events.participants
+
+
+@router.post("/execute-proposal")
+async def execute_proposal(
+    request: ExecuteProposalRequest,
+    background_tasks: "BackgroundTasks",
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Thực thi proposal:
+    1. Gửi email ngay lập tức qua Gmail API
+    2. Nếu có proposed_time → BackgroundTask: lưu vào pending_events table (status='confirmed')
+    """
+    from tools.email_tools import send_email
+    from fastapi import BackgroundTasks as _BG
+
+    if not request.recipients:
+        raise HTTPException(status_code=400, detail="Danh sách người nhận trống")
+
+    # ── 1. Gửi email (blocking, cần biết kết quả ngay) ──────────────────────
+    result = await send_email(
+        user_id=user_id,
+        subject=request.subject,
+        body=request.body,
+        recipients=request.recipients,
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Lỗi gửi email"))
+
+    new_event_id: Optional[str] = None
+
+    # ── 2. BackgroundTask: lưu lịch hẹn vào pending_events ─────────────────
+    if request.proposed_time:
+        async def _save_event():
+            from services.db_service import create_pending_event
+            eid = await create_pending_event(
+                user_id=user_id,
+                title=request.subject,
+                participants=list(set((request.participants or []) + request.recipients)),
+                proposed_time=request.proposed_time,
+                status="confirmed",
+            )
+            print(f"[ExecuteProposal] Saved pending_event id={eid} for user={user_id}")
+
+        background_tasks.add_task(_save_event)
+
+    return {
+        "status": "success",
+        "message_id": result.get("message_id"),
+        "event_id": new_event_id,
+    }
+
+

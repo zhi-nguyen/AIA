@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     tts_language: str = "vi-VN"
     stt_language: str = "vi-VN"
 
+    # === Vertex AI Search (Discovery Engine) ===
+    vertex_search_data_store_id: str = "aia-ds_1774321984667"
+    data_store_credentials_path: str = os.path.join(os.path.dirname(__file__), "data-store-key.json")
+
     # === Vector Store ===
     embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"

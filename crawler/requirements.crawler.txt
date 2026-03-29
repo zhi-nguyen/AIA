@@ -1,0 +1,19 @@
+# Minimal dependencies for the News Crawler service.
+# Intentionally excludes FastAPI, psycopg2, langchain-graph, audio libs, etc.
+
+# ── Celery + broker ────────────────────────────────────────────────────────
+celery==5.3.6
+redis==5.0.3
+
+# ── Google Cloud / Vertex AI ───────────────────────────────────────────────
+google-cloud-aiplatform>=1.38.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.1.0
+
+# ── LangChain (Vertex AI + core only) ─────────────────────────────────────
+langchain-core>=0.1.0
+langchain-google-vertexai>=1.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+requests>=2.31.0
