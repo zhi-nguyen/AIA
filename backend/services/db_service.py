@@ -69,6 +69,18 @@ async def init_db_tables(pool: asyncpg.Pool):
             );
         """)
 
+        # Bảng lưu các đề xuất email đang chờ người dùng phản hồi
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_proposals (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                gmail_id VARCHAR(255),
+                payload JSONB NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+
 async def create_guest_user() -> str:
     """Tạo guest user và trả về UUID."""
     pool = await get_db_pool()
@@ -220,6 +232,45 @@ async def update_event_status(event_id: str, status: str) -> None:
             status, event_id,
         )
 
+# ---------------------------------------------------------------------------
+# pending_proposals helpers — Đề xuất AI Thư Ký
+# ---------------------------------------------------------------------------
+
+async def create_pending_proposal(user_id: str, gmail_id: str, payload: dict) -> str:
+    """Tạo pending proposal mới và trả về UUID ID."""
+    pool = await get_db_pool()
+    proposal_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO pending_proposals (id, user_id, gmail_id, payload)
+            VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)
+            """,
+            proposal_id, user_id, gmail_id, json.dumps(payload, ensure_ascii=False),
+        )
+    return proposal_id
+
+async def get_pending_proposals(user_id: str) -> list[dict]:
+    """Lấy danh sách các proposal đang chờ của user."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, payload FROM pending_proposals WHERE user_id = $1::uuid ORDER BY created_at ASC",
+            user_id,
+        )
+        return [{"id": str(r["id"]), "payload": json.loads(r["payload"])} for r in rows]
+
+async def delete_pending_proposal(proposal_id: str, user_id: str) -> bool:
+    """Xóa một proposal đang chờ (sau khi user đã phản hồi hoặc bỏ qua)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM pending_proposals WHERE id = $1::uuid AND user_id = $2::uuid",
+            proposal_id, user_id,
+        )
+        return "1" in result # 'DELETE 1'
+
+
 
 # ---------------------------------------------------------------------------
 # User enumeration helper — dùng cho Celery batch task
@@ -234,10 +285,10 @@ async def get_all_authorized_users() -> list[str]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT DISTINCT user_id::text
-            FROM gmail_tokens
-            WHERE refresh_token IS NOT NULL
+            SELECT DISTINCT id::text
+            FROM users
+            WHERE encrypted_refresh_token IS NOT NULL
             """
         )
-        return [str(row["user_id"]) for row in rows]
+        return [str(row["id"]) for row in rows]
 

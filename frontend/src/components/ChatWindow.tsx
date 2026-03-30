@@ -15,7 +15,7 @@ import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
 import ProposalCard from "@/components/EmailCard";
 import { useProposals } from "@/hooks/useProposals";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -50,6 +50,17 @@ export default function ChatWindow() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [pendingFileType, setPendingFileType] = useState<"document" | "image" | null>(null);
+
+  // Proposal UI State
+  const [showProposalsPanel, setShowProposalsPanel] = useState(false);
+  const prevProposalsLength = useRef(0);
+
+  useEffect(() => {
+    if (proposals.length > prevProposalsLength.current) {
+      setShowProposalsPanel(true);
+    }
+    prevProposalsLength.current = proposals.length;
+  }, [proposals.length]);
 
   // Upload state
   const [attachedDoc, setAttachedDoc] = useState<UploadResult | null>(null);
@@ -253,6 +264,29 @@ export default function ChatWindow() {
             style={{ opacity: userRole === "member" ? 1 : 0.5, cursor: userRole === "member" ? "pointer" : "not-allowed" }}
           >
             <Settings size={20} />
+          </button>
+          <button
+            className="chat-header__btn"
+            style={{ position: "relative" }}
+            onClick={() => setShowProposalsPanel(prev => !prev)}
+            title="Đề xuất & Cuộc hẹn"
+          >
+            <Bell size={20} />
+            {proposals.length > 0 && (
+              <span style={{
+                position: "absolute",
+                top: -5,
+                right: -5,
+                background: "red",
+                color: "white",
+                borderRadius: "50%",
+                padding: "2px 6px",
+                fontSize: "10px",
+                fontWeight: "bold"
+              }}>
+                {proposals.length}
+              </span>
+            )}
           </button>
           {userRole === "member" && (
             <button
@@ -504,17 +538,27 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* Proposal Toast Stack */}
-      {proposals.length > 0 && (
-        <div className="proposal-toast-container">
-          {proposals.map(proposal => (
-            <ProposalCard 
-              key={proposal.id}
-              proposal={proposal}
-              onApprove={approveProposal}
-              onDismiss={dismissProposal}
-            />
-          ))}
+      {/* Proposal Toast Stack / Sidebar */}
+      {showProposalsPanel && (
+        <div className="proposal-toast-container" style={{ background: 'rgba(20,20,30,0.95)', padding: '15px', borderRadius: '12px', border: '1px solid #333', maxHeight: '80vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid #444', paddingBottom: '10px' }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>Đề xuất cần xác nhận ({proposals.length})</h3>
+            <button onClick={() => setShowProposalsPanel(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>
+              <X size={20} />
+            </button>
+          </div>
+          {proposals.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', opacity: 0.7 }}>Không có đề xuất nào đang chờ.</div>
+          ) : (
+            proposals.map(proposal => (
+              <ProposalCard 
+                key={proposal.id}
+                proposal={proposal}
+                onApprove={approveProposal}
+                onDismiss={dismissProposal}
+              />
+            ))
+          )}
         </div>
       )}
     </div>

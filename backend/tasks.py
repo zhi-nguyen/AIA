@@ -113,7 +113,7 @@ def generate_tts(self, user_id: str, text: str):
 @celery_app.task(bind=True, name="tasks.hourly_email_assistant")
 def hourly_email_assistant(self):
     """
-    Chạy mỗi 15 phút: quét toàn bộ users đã cấp phép Gmail,
+    Chạy mỗi 30 giây (test environment): quét toàn bộ users đã cấp phép Gmail,
     kéo email mới (Tier 1 DB diff + Tier 2 Regex), rồi gọi
     process_email_intent() cho từng email vượt qua bộ lọc.
     """
@@ -149,5 +149,6 @@ def hourly_email_assistant(self):
 
         print("[EmailAssistant] Hoàn thành chu kỳ")
 
-    asyncio.run(_run())
+    loop = get_or_create_eventloop()
+    loop.run_until_complete(_run())
 

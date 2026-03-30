@@ -7,7 +7,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { executeProposal } from "@/lib/api";
+import { executeProposal, getProposals, deleteProposal } from "@/lib/api";
 
 export type ProposalStatus = "pending" | "sending" | "sent" | "error";
 export type ActionType = "create_event" | "reply_email" | "ignore";
@@ -73,6 +73,34 @@ function buildExecutePayload(action: SuggestedAction, proposal: Proposal) {
 export function useProposals() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
 
+  // Fetch from DB on mount
+  useEffect(() => {
+    getProposals()
+      .then((data) => {
+        if (data?.proposals) {
+          const initialProposals = data.proposals.map((item: any) => {
+            const d = item.payload;
+            return {
+              id: item.id, // Use DB id
+              source: "email_secretary",
+              gmail_id: d.gmail_id,
+              email_subject: d.email_subject,
+              email_from: d.email_from,
+              is_invitation: d.is_invitation,
+              confidence: d.confidence,
+              intent: d.intent,
+              suggested_actions: d.suggested_actions ?? [],
+              status: "pending",
+              activeActionIndex: 0,
+              timestamp: Date.now(),
+            } as Proposal;
+          });
+          setProposals(initialProposals);
+        }
+      })
+      .catch((err) => console.error("Failed to load persistent proposals:", err));
+  }, []);
+
   useEffect(() => {
     const handleNewProposal = (e: Event) => {
       const { detail } = e as CustomEvent;
@@ -82,7 +110,7 @@ export function useProposals() {
         // Phase 3: AI Secretary format
         const d = detail.data;
         newProposal = {
-          id: `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          id: d.db_id || `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           source: "email_secretary",
           gmail_id: d.gmail_id,
           email_subject: d.email_subject,
@@ -114,7 +142,11 @@ export function useProposals() {
         };
       }
 
-      setProposals((prev) => [...prev, newProposal]);
+      setProposals((prev) => {
+        // Tránh trùng lặp nếu WS gửi nhiều lần
+        if (prev.some(p => p.id === newProposal.id)) return prev;
+        return [...prev, newProposal];
+      });
     };
 
     window.addEventListener("proposal_received", handleNewProposal);
@@ -123,10 +155,14 @@ export function useProposals() {
 
   const dismissProposal = useCallback((id: string) => {
     setProposals((prev) => prev.filter((p) => p.id !== id));
+    // Only call deleteAPI if it looks like a DB UUID (not prop_...)
+    if (!id.startsWith("prop_")) {
+      deleteProposal(id).catch((err) => console.error("Failed to delete proposal DB", err));
+    }
   }, []);
 
   const approveProposal = useCallback(
-    async (id: string, actionIndex = 0) => {
+    async (id: string, actionIndex = 0, modifiedPayload?: { reply_body?: string; participants?: string[] }) => {
       const proposal = proposals.find((p) => p.id === id);
       if (!proposal || proposal.status !== "pending") return;
 
@@ -142,16 +178,20 @@ export function useProposals() {
         if (proposal.source === "email_secretary" && proposal.suggested_actions?.length) {
           const action = proposal.suggested_actions[actionIndex];
           if (action.action_type === "ignore") {
-            // "Bỏ qua" — just dismiss without API call
-            setProposals((prev) => prev.filter((p) => p.id !== id));
+            // "Bỏ qua" — just dismiss
+            dismissProposal(id);
             return;
           }
           execPayload = buildExecutePayload(action, proposal);
+          if (modifiedPayload) {
+            if (modifiedPayload.reply_body !== undefined) execPayload.body = modifiedPayload.reply_body;
+            if (modifiedPayload.participants !== undefined) execPayload.recipients = modifiedPayload.participants;
+          }
         } else {
           execPayload = {
             subject: proposal.payload?.subject || "",
-            body: proposal.payload?.body || "",
-            recipients: proposal.payload?.recipients || [],
+            body: modifiedPayload?.reply_body !== undefined ? modifiedPayload.reply_body : (proposal.payload?.body || ""),
+            recipients: modifiedPayload?.participants !== undefined ? modifiedPayload.participants : (proposal.payload?.recipients || []),
           };
         }
 
@@ -160,7 +200,11 @@ export function useProposals() {
         setProposals((prev) =>
           prev.map((p) => (p.id === id ? { ...p, status: "sent" } : p))
         );
-        setTimeout(() => dismissProposal(id), 3000);
+
+        const actionType = proposal.suggested_actions?.[actionIndex]?.action_type;
+        if (actionType !== "create_event") {
+          setTimeout(() => dismissProposal(id), 3000);
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Lỗi giao tác";
         setProposals((prev) =>

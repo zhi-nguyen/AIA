@@ -19,11 +19,11 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     broker_connection_retry_on_startup=True,
-    # Beat schedule — runs hourly_email_assistant every 15 minutes
+    # Beat schedule — runs hourly_email_assistant every 30 seconds (for test environment)
     beat_schedule={
-        "email-assistant-every-15-min": {
+        "email-assistant-every-30-sec": {
             "task": "tasks.hourly_email_assistant",
-            "schedule": crontab(minute="*/15"),
+            "schedule": 30.0,
             "options": {"queue": "default"},
         },
     },
