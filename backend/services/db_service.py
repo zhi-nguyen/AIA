@@ -136,19 +136,49 @@ async def get_user_info(user_id: str) -> dict:
         row = await conn.fetchrow("SELECT role, email FROM users WHERE id = $1::uuid", user_id)
         return dict(row) if row else None
 
-async def link_google_account(user_id: str, google_id: str, email: str, encrypted_access: str, encrypted_refresh: str):
-    """Nâng cấp guest lên member và lưu Google credentials."""
+async def link_google_account(user_id: str, google_id: str, email: str, encrypted_access: str, encrypted_refresh: str) -> str:
+    """
+    Nâng cấp guest lên member và lưu Google credentials.
+    Nếu google_id đã tồn tại ở user khác (re-login từ session mới),
+    cập nhật token cho user cũ và trả về user_id thực tế.
+    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE users 
-            SET role = 'member', 
-                google_id = $1, 
-                email = $2, 
-                encrypted_access_token = $3, 
-                encrypted_refresh_token = $4 
-            WHERE id = $5::uuid
-        """, google_id, email, encrypted_access, encrypted_refresh, user_id)
+        # Kiểm tra xem google_id đã thuộc user nào chưa
+        existing = await conn.fetchrow(
+            "SELECT id::text FROM users WHERE google_id = $1",
+            google_id,
+        )
+
+        if existing and str(existing["id"]) != user_id:
+            # Google account đã link với user khác → cập nhật token cho user đó
+            real_user_id = str(existing["id"])
+            await conn.execute("""
+                UPDATE users 
+                SET encrypted_access_token = $1, 
+                    encrypted_refresh_token = $2 
+                WHERE id = $3::uuid
+            """, encrypted_access, encrypted_refresh, real_user_id)
+            
+            # Chuyển session hiện tại sang user cũ
+            await conn.execute(
+                "UPDATE sessions SET user_id = $1::uuid WHERE user_id = $2::uuid",
+                real_user_id, user_id,
+            )
+            print(f"[DB] Re-linked Google {email} → existing user {real_user_id[:8]}…")
+            return real_user_id
+        else:
+            # Lần đầu link hoặc đúng user → update bình thường
+            await conn.execute("""
+                UPDATE users 
+                SET role = 'member', 
+                    google_id = $1, 
+                    email = $2, 
+                    encrypted_access_token = $3, 
+                    encrypted_refresh_token = $4 
+                WHERE id = $5::uuid
+            """, google_id, email, encrypted_access, encrypted_refresh, user_id)
+            return user_id
 
 async def get_google_credentials(user_id: str) -> dict:
     pool = await get_db_pool()

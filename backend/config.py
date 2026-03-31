@@ -44,8 +44,8 @@ class Settings(BaseSettings):
 
     # === Gmail Push (Pub/Sub Watch) ===
     pubsub_project_id: str = "xiaoyue-api"
-    pubsub_topic_id: str = "gmail-push"
-    pubsub_subscription_id: str = "gmail-push-sub"
+    pubsub_topic_id: str = "gmail-webhook-topic"
+    pubsub_subscription_id: str = "gmail-webhook-sub"
     # === Vector Store ===
     embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"

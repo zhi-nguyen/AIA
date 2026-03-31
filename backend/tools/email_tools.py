@@ -63,7 +63,8 @@ async def _get_gmail_service(user_id: str):
         token_uri=client_config.get("token_uri", "https://oauth2.googleapis.com/token"),
         client_id=client_config.get("client_id"),
         client_secret=client_config.get("client_secret"),
-        scopes=SCOPES
+        # Không truyền scopes — Dùng scope đã cấp phép lúc OAuth login ban đầu.
+        # Nếu truyền scope khác sẽ gây lỗi invalid_scope khi refresh token.
     )
 
     if creds.expired and creds.refresh_token:
@@ -218,6 +219,10 @@ async def fetch_unread_emails(user_id: str, limit: int = 10) -> list[dict]:
                     f"id={gmail_id} | subject=\"{subject[:60]}\""
                 )
                 continue
+
+            # Đánh dấu đã xử lý NGAY để tránh duplicate khi Pub/Sub gửi
+            # nhiều notification cho cùng một email (at-least-once delivery)
+            await add_processed_email(user_id, gmail_id)
 
             emails.append({
                 "id": gmail_id,

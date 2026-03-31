@@ -151,16 +151,16 @@ async def auth_callback(request: Request):
         enc_refresh = encrypt_token(creds.refresh_token) if creds.refresh_token else None
         
         from services.db_service import link_google_account
-        await link_google_account(user_id, google_id, email, enc_access, enc_refresh)
+        real_user_id = await link_google_account(user_id, google_id, email, enc_access, enc_refresh)
             
-        print(f"[Auth] Đã link Google account {email} cho session member!")
+        print(f"[Auth] Đã link Google account {email} cho user {real_user_id[:8]}…")
 
-        # Tự động đăng ký Gmail Watch cho user mới
+        # Tự động đăng ký Gmail Watch cho user
         try:
             from services.gmail_watch import register_gmail_watch
-            await register_gmail_watch(user_id)
+            await register_gmail_watch(real_user_id)
         except Exception as watch_err:
-            print(f"[Auth] ⚠️ Không thể đăng ký Gmail Watch: {watch_err}")
+            print(f"[Auth] Không thể đăng ký Gmail Watch: {watch_err}")
     except Exception as e:
         import traceback
         traceback.print_exc()
