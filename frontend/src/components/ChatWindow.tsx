@@ -14,8 +14,9 @@ import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, 
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
 import ProposalCard from "@/components/EmailCard";
+import CalendarTab from "@/components/CalendarTab";
 import { useProposals } from "@/hooks/useProposals";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell, Calendar } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -40,6 +41,7 @@ export default function ChatWindow() {
   const { proposals, approveProposal, dismissProposal } = useProposals();
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   const [input, setInput] = useState("");
+  const [activeTab, setActiveTab] = useState<"chat" | "calendar">("chat");
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +52,17 @@ export default function ChatWindow() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [pendingFileType, setPendingFileType] = useState<"document" | "image" | null>(null);
+
+  // Proposal UI State
+  const [showProposalsPanel, setShowProposalsPanel] = useState(false);
+  const prevProposalsLength = useRef(0);
+
+  useEffect(() => {
+    if (proposals.length > prevProposalsLength.current) {
+      setShowProposalsPanel(true);
+    }
+    prevProposalsLength.current = proposals.length;
+  }, [proposals.length]);
 
   // Upload state
   const [attachedDoc, setAttachedDoc] = useState<UploadResult | null>(null);
@@ -254,6 +267,36 @@ export default function ChatWindow() {
           >
             <Settings size={20} />
           </button>
+          <button
+            className={`chat-header__btn ${activeTab === 'calendar' ? 'active text-blue-400' : ''}`}
+            onClick={() => setActiveTab(activeTab === 'calendar' ? 'chat' : 'calendar')}
+            title="Lịch hẹn cá nhân"
+          >
+            <Calendar size={20} />
+          </button>
+          <button
+            className="chat-header__btn"
+            style={{ position: "relative" }}
+            onClick={() => setShowProposalsPanel(prev => !prev)}
+            title="Đề xuất & Cuộc hẹn"
+          >
+            <Bell size={20} />
+            {proposals.length > 0 && (
+              <span style={{
+                position: "absolute",
+                top: -5,
+                right: -5,
+                background: "red",
+                color: "white",
+                borderRadius: "50%",
+                padding: "2px 6px",
+                fontSize: "10px",
+                fontWeight: "bold"
+              }}>
+                {proposals.length}
+              </span>
+            )}
+          </button>
           {userRole === "member" && (
             <button
               className="chat-header__btn"
@@ -298,24 +341,28 @@ export default function ChatWindow() {
         </div>
       </header>
 
-      {/* Document badge (đã upload trước đó) */}
-      {attachedDoc && (
-        <div className="doc-badge">
-          <span className="doc-badge__icon"><FileText size={16} /></span>
-          <span className="doc-badge__name">{attachedDoc.filename}</span>
-          <span className="doc-badge__info">
-            {attachedDoc.char_count.toLocaleString()} ký tự
-            {attachedDoc.truncated && " (đã cắt)"}
-          </span>
-          <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
-            <X size={14} />
-          </button>
-        </div>
-      )}
+      {activeTab === "calendar" ? (
+        <CalendarTab />
+      ) : (
+        <>
+          {/* Document badge (đã upload trước đó) */}
+          {attachedDoc && (
+            <div className="doc-badge">
+              <span className="doc-badge__icon"><FileText size={16} /></span>
+              <span className="doc-badge__name">{attachedDoc.filename}</span>
+              <span className="doc-badge__info">
+                {attachedDoc.char_count.toLocaleString()} ký tự
+                {attachedDoc.truncated && " (đã cắt)"}
+              </span>
+              <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
-      {/* Messages */}
-      <div className="chat-messages">
-        {messages.length === 0 && (
+          {/* Messages */}
+          <div className="chat-messages">
+            {messages.length === 0 && (
           <div className="chat-empty">
             <div className="chat-empty__icon"><Bot size={48} className="text-blue-500 mx-auto" /></div>
             <h2>Xin chào! Tôi là AIA</h2>
@@ -454,6 +501,8 @@ export default function ChatWindow() {
           {isLoading || isUploading ? <Hourglass size={20} /> : <Send size={20} />}
         </button>
       </div>
+      </>
+      )}
 
       {/* Profile Modal */}
       {showProfile && (
@@ -504,17 +553,27 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* Proposal Toast Stack */}
-      {proposals.length > 0 && (
-        <div className="proposal-toast-container">
-          {proposals.map(proposal => (
-            <ProposalCard 
-              key={proposal.id}
-              proposal={proposal}
-              onApprove={approveProposal}
-              onDismiss={dismissProposal}
-            />
-          ))}
+      {/* Proposal Toast Stack / Sidebar */}
+      {showProposalsPanel && (
+        <div className="proposal-toast-container" style={{ background: 'rgba(20,20,30,0.95)', padding: '15px', borderRadius: '12px', border: '1px solid #333', maxHeight: '80vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid #444', paddingBottom: '10px' }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>Đề xuất cần xác nhận ({proposals.length})</h3>
+            <button onClick={() => setShowProposalsPanel(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>
+              <X size={20} />
+            </button>
+          </div>
+          {proposals.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', opacity: 0.7 }}>Không có đề xuất nào đang chờ.</div>
+          ) : (
+            proposals.map(proposal => (
+              <ProposalCard 
+                key={proposal.id}
+                proposal={proposal}
+                onApprove={approveProposal}
+                onDismiss={dismissProposal}
+              />
+            ))
+          )}
         </div>
       )}
     </div>

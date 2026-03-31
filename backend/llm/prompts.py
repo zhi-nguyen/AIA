@@ -195,7 +195,9 @@ Phân tích email dưới đây và trả về ĐÚNG cấu trúc JSON sau (KHÔ
         "title": "<tiêu đề cuộc hẹn đề xuất hoặc null>",
         "participants": ["<email hoặc tên người tham gia>"],
         "proposed_time": "<ISO 8601 datetime dựa vào thời gian thực tế đã inject ở trên, hoặc null nếu không rõ>",
-        "reply_body": "<nội dung email trả lời đề xuất hoặc null>"
+        "reply_body": "<nội dung email trả lời đề xuất hoặc null>",
+        "note": "<mô tả chi tiết cuộc họp/notes, hoặc null>",
+        "weather_dependent": <true/false tùy thuộc sự kiện ngoài trời bị ảnh hưởng thời tiết hay không>
       }}
     }}
   ]

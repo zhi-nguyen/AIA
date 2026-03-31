@@ -128,8 +128,7 @@ async def process_email_intent(user_id: str, email_data: dict) -> dict | None:
         dict kết quả phân tích nếu thành công, hoặc None nếu lỗi.
     """
     from llm.prompts import MEETING_INTENT_PROMPT
-    from services.db_service import add_processed_email
-    from api.websocket import manager
+    from services.db_service import add_processed_email, create_pending_proposal
 
     client = get_gemini_client()
 
@@ -162,17 +161,27 @@ async def process_email_intent(user_id: str, email_data: dict) -> dict | None:
             f"confidence={result.get('confidence', 0):.2f}"
         )
 
-        # Đẩy kết quả lên UI qua WebSocket nếu client đang kết nối
-        ws_sent = await manager.send_to_web(
-            user_id,
-            {
+        # Lưu Proposal vào Database để đồng bộ lâu dài
+        if result.get("is_invitation") or result.get("suggested_actions"):
+            proposal_id = await create_pending_proposal(user_id, result["gmail_id"], result)
+            result["db_id"] = proposal_id
+            print(f"[EmailAgent][Secretary] Đã lưu db_id={proposal_id}")
+
+        # Đẩy kết quả lên UI qua Redis PubSub (để FastAPI forward qua WebSocket)
+        try:
+            import redis.asyncio as aioredis
+            from celery_app import redis_url
+            r = aioredis.from_url(redis_url)
+            pub_data = {
                 "type": "NEW_PROPOSAL",
                 "source": "email_secretary",
+                "user_id": user_id,
                 "data": result,
-            },
-        )
-        if not ws_sent:
-            print(f"[EmailAgent][Secretary] WebSocket client offline cho user={user_id} — bỏ qua push")
+            }
+            await r.publish("aia_ws_messages", json.dumps(pub_data, ensure_ascii=False))
+            print(f"[EmailAgent][Secretary] Đã push proposal qua Redis PubSub cho user={user_id}")
+        except Exception as redis_e:
+            print(f"[EmailAgent][Secretary] Redis publish error cho user={user_id}: {redis_e}")
 
         # Đánh dấu email đã xử lý (dù có gửi WS hay không)
         await add_processed_email(user_id, email_data.get("id", ""))

@@ -65,9 +65,31 @@ async def init_db_tables(pool: asyncpg.Pool):
                 participants  TEXT[],
                 proposed_time TIMESTAMP WITH TIME ZONE,
                 status        VARCHAR(50) NOT NULL DEFAULT 'pending',
+                note          TEXT,
+                weather_dependent BOOLEAN DEFAULT FALSE,
                 created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Add columns if they do not exist (for smooth migration)
+        # Note: postgresql 9.6+ supports IF NOT EXISTS for ADD COLUMN
+        await conn.execute("""
+            ALTER TABLE pending_events 
+            ADD COLUMN IF NOT EXISTS note TEXT,
+            ADD COLUMN IF NOT EXISTS weather_dependent BOOLEAN DEFAULT FALSE;
+        """)
+
+        # Bảng lưu các đề xuất email đang chờ người dùng phản hồi
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_proposals (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                gmail_id VARCHAR(255),
+                payload JSONB NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
 
 async def create_guest_user() -> str:
     """Tạo guest user và trả về UUID."""
@@ -196,6 +218,8 @@ async def create_pending_event(
     participants: list[str],
     proposed_time: datetime | None = None,
     status: str = "pending",
+    note: str | None = None,
+    weather_dependent: bool = False,
 ) -> str:
     """Tạo một pending event và trả về UUID của nó."""
     pool = await get_db_pool()
@@ -203,12 +227,27 @@ async def create_pending_event(
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO pending_events (id, user_id, title, participants, proposed_time, status)
-            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+            INSERT INTO pending_events (id, user_id, title, participants, proposed_time, status, note, weather_dependent)
+            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)
             """,
-            event_id, user_id, title, participants, proposed_time, status,
+            event_id, user_id, title, participants, proposed_time, status, note, weather_dependent
         )
     return event_id
+
+async def get_user_events(user_id: str) -> list[dict]:
+    """Lấy danh sách các cuộc hẹn của user (status = 'confirmed' hoặc 'pending')."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, title, participants, proposed_time, status, note, weather_dependent, created_at 
+            FROM pending_events 
+            WHERE user_id = $1::uuid 
+            ORDER BY proposed_time ASC NULLS LAST
+            """,
+            user_id
+        )
+        return [dict(row) for row in rows]
 
 
 async def update_event_status(event_id: str, status: str) -> None:
@@ -220,6 +259,45 @@ async def update_event_status(event_id: str, status: str) -> None:
             status, event_id,
         )
 
+# ---------------------------------------------------------------------------
+# pending_proposals helpers — Đề xuất AI Thư Ký
+# ---------------------------------------------------------------------------
+
+async def create_pending_proposal(user_id: str, gmail_id: str, payload: dict) -> str:
+    """Tạo pending proposal mới và trả về UUID ID."""
+    pool = await get_db_pool()
+    proposal_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO pending_proposals (id, user_id, gmail_id, payload)
+            VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)
+            """,
+            proposal_id, user_id, gmail_id, json.dumps(payload, ensure_ascii=False),
+        )
+    return proposal_id
+
+async def get_pending_proposals(user_id: str) -> list[dict]:
+    """Lấy danh sách các proposal đang chờ của user."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, payload FROM pending_proposals WHERE user_id = $1::uuid ORDER BY created_at ASC",
+            user_id,
+        )
+        return [{"id": str(r["id"]), "payload": json.loads(r["payload"])} for r in rows]
+
+async def delete_pending_proposal(proposal_id: str, user_id: str) -> bool:
+    """Xóa một proposal đang chờ (sau khi user đã phản hồi hoặc bỏ qua)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM pending_proposals WHERE id = $1::uuid AND user_id = $2::uuid",
+            proposal_id, user_id,
+        )
+        return "1" in result # 'DELETE 1'
+
+
 
 # ---------------------------------------------------------------------------
 # User enumeration helper — dùng cho Celery batch task
@@ -228,16 +306,30 @@ async def update_event_status(event_id: str, status: str) -> None:
 async def get_all_authorized_users() -> list[str]:
     """
     Trả về danh sách user_id đã lưu Gmail refresh token (đã cấp phép).
-    Dùng bởi hourly_email_assistant để biết cần quét email của ai.
+    Dùng bởi gmail_watch để đăng ký watch cho tất cả users khi khởi động.
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT DISTINCT user_id::text
-            FROM gmail_tokens
-            WHERE refresh_token IS NOT NULL
+            SELECT DISTINCT id::text
+            FROM users
+            WHERE encrypted_refresh_token IS NOT NULL
             """
         )
-        return [str(row["user_id"]) for row in rows]
+        return [str(row["id"]) for row in rows]
+
+
+async def get_user_id_by_email(email: str) -> str | None:
+    """
+    Tìm user_id theo địa chỉ email Google đã link.
+    Dùng bởi Gmail Watch listener để xác định notification thuộc user nào.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id::text FROM users WHERE email = $1",
+            email,
+        )
+        return row["id"] if row else None
 

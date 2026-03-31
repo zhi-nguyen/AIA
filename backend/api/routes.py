@@ -3,7 +3,7 @@ routes.py - REST API Endpoints
 Định nghĩa các endpoint cho frontend gọi
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Response, Depends
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Response, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -523,12 +523,14 @@ class ExecuteProposalRequest(BaseModel):
     event_id: Optional[str] = None          # gmail_id của email gốc
     proposed_time: Optional[str] = None     # ISO 8601 datetime (from suggested_actions payload)
     participants: Optional[list[str]] = None  # sẽ ghi vào pending_events.participants
+    note: Optional[str] = None
+    weather_dependent: Optional[bool] = False
 
 
 @router.post("/execute-proposal")
 async def execute_proposal(
     request: ExecuteProposalRequest,
-    background_tasks: "BackgroundTasks",
+    background_tasks: BackgroundTasks,
     user_id: str = Depends(get_current_user_id),
 ):
     """
@@ -537,7 +539,6 @@ async def execute_proposal(
     2. Nếu có proposed_time → BackgroundTask: lưu vào pending_events table (status='confirmed')
     """
     from tools.email_tools import send_email
-    from fastapi import BackgroundTasks as _BG
 
     if not request.recipients:
         raise HTTPException(status_code=400, detail="Danh sách người nhận trống")
@@ -565,6 +566,8 @@ async def execute_proposal(
                 participants=list(set((request.participants or []) + request.recipients)),
                 proposed_time=request.proposed_time,
                 status="confirmed",
+                note=request.note,
+                weather_dependent=request.weather_dependent,
             )
             print(f"[ExecuteProposal] Saved pending_event id={eid} for user={user_id}")
 
@@ -576,4 +579,42 @@ async def execute_proposal(
         "event_id": new_event_id,
     }
 
+
+# === Proposal & Event Endpoints ===
+
+@router.get("/events")
+async def get_events(user_id: str = Depends(get_current_user_id)):
+    """Trả về danh sách 50 kiện (appointments) gần nhất/sắp tới."""
+    from services.db_service import get_user_events
+    events = await get_user_events(user_id)
+    # Xử lý format datetime về chuỗi ISO để qua API
+    for e in events:
+        if isinstance(e.get("proposed_time"), datetime):
+            e["proposed_time"] = e["proposed_time"].isoformat()
+        if isinstance(e.get("created_at"), datetime):
+            e["created_at"] = e["created_at"].isoformat()
+    return events
+@router.get("/proposals")
+async def get_proposals(user_id: str = Depends(get_current_user_id)):
+    """Lấy danh sách các đề xuất AI thư ký (pending proposal) của user"""
+    from services.db_service import get_pending_proposals
+    try:
+        proposals = await get_pending_proposals(user_id)
+        return {"status": "ok", "proposals": proposals}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/proposals/{proposal_id}")
+async def delete_proposal(proposal_id: str, user_id: str = Depends(get_current_user_id)):
+    """Xóa một đề xuất sau khi xử lý (đồng ý / bỏ qua)"""
+    from services.db_service import delete_pending_proposal
+    try:
+        success = await delete_pending_proposal(proposal_id, user_id)
+        return {"status": "ok", "deleted": success}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 

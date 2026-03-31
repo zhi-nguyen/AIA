@@ -46,6 +46,9 @@ pytest-asyncio>=0.23.0
 # === Vertex AI Search (Discovery Engine) ===
 google-cloud-discoveryengine>=0.13.0
 
+# === Google Cloud Pub/Sub (Gmail Watch) ===
+google-cloud-pubsub>=2.23.0
+
 # === Async Task Queue ===
 celery>=5.3.6
 redis>=5.0.1

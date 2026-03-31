@@ -66,6 +66,30 @@ async def startup_event():
 
     asyncio.create_task(listen_to_redis())
 
+    # ── Gmail Push: Đăng ký watch + khởi động Pub/Sub listener ──
+    async def _start_gmail_watch():
+        """Đợi 5s cho DB pool sẵn sàng, rồi đăng ký watch + bật listener."""
+        await asyncio.sleep(5)
+        try:
+            from services.gmail_watch import (
+                register_all_users_watch,
+                start_pubsub_listener,
+                _renew_watch_loop,
+            )
+            # Đăng ký watch cho tất cả users đã cấp phép
+            await register_all_users_watch()
+            # Chạy listener pull Pub/Sub messages (vô hạn)
+            asyncio.create_task(start_pubsub_listener())
+            # Chạy renew watch mỗi 6 ngày
+            asyncio.create_task(_renew_watch_loop())
+            print("[Startup] ✅ Gmail Watch + Pub/Sub listener đã khởi động")
+        except Exception as e:
+            print(f"[Startup] ⚠️ Không thể khởi động Gmail Watch: {e}")
+            import traceback
+            traceback.print_exc()
+
+    asyncio.create_task(_start_gmail_watch())
+
 
 
 # === Health Check ===
@@ -130,6 +154,13 @@ async def auth_callback(request: Request):
         await link_google_account(user_id, google_id, email, enc_access, enc_refresh)
             
         print(f"[Auth] Đã link Google account {email} cho session member!")
+
+        # Tự động đăng ký Gmail Watch cho user mới
+        try:
+            from services.gmail_watch import register_gmail_watch
+            await register_gmail_watch(user_id)
+        except Exception as watch_err:
+            print(f"[Auth] ⚠️ Không thể đăng ký Gmail Watch: {watch_err}")
     except Exception as e:
         import traceback
         traceback.print_exc()

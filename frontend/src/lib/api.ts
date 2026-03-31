@@ -344,6 +344,9 @@ export async function executeProposal(payload: {
   recipients: string[];
   event_id?: string;
   proposed_time?: string;
+  participants?: string[];
+  note?: string;
+  weather_dependent?: boolean;
 }): Promise<{ status: string; message_id?: string; event_id?: string }> {
   const res = await fetchWithAuth(`${API_BASE_URL}/execute-proposal`, {
     method: "POST",
@@ -353,6 +356,45 @@ export async function executeProposal(payload: {
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to execute proposal" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Lấy danh sách Proposal đang pending từ DB (nếu reload trang)
+ */
+export async function getProposals(): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/proposals`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch proposals" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Xóa Proposal khỏi DB sau khi đã xử lý (Gửi / Bỏ qua)
+ */
+export async function deleteProposal(proposalId: string): Promise<{ status: string; deleted: boolean }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/proposals/${proposalId}`, {
+    method: "DELETE",
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete proposal" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Lấy danh sách Sự kiện đã đồng bộ (cho Calendar View)
+ */
+export async function getEvents(): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/events`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch events" }));
     throw new Error(error.detail || `HTTP ${res.status}`);
   }
   return res.json();
