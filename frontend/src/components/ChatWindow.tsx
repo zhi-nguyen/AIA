@@ -14,8 +14,9 @@ import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, 
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
 import ProposalCard from "@/components/EmailCard";
+import CalendarTab from "@/components/CalendarTab";
 import { useProposals } from "@/hooks/useProposals";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell, Calendar } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -40,6 +41,7 @@ export default function ChatWindow() {
   const { proposals, approveProposal, dismissProposal } = useProposals();
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   const [input, setInput] = useState("");
+  const [activeTab, setActiveTab] = useState<"chat" | "calendar">("chat");
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -266,6 +268,13 @@ export default function ChatWindow() {
             <Settings size={20} />
           </button>
           <button
+            className={`chat-header__btn ${activeTab === 'calendar' ? 'active text-blue-400' : ''}`}
+            onClick={() => setActiveTab(activeTab === 'calendar' ? 'chat' : 'calendar')}
+            title="Lịch hẹn cá nhân"
+          >
+            <Calendar size={20} />
+          </button>
+          <button
             className="chat-header__btn"
             style={{ position: "relative" }}
             onClick={() => setShowProposalsPanel(prev => !prev)}
@@ -332,24 +341,28 @@ export default function ChatWindow() {
         </div>
       </header>
 
-      {/* Document badge (đã upload trước đó) */}
-      {attachedDoc && (
-        <div className="doc-badge">
-          <span className="doc-badge__icon"><FileText size={16} /></span>
-          <span className="doc-badge__name">{attachedDoc.filename}</span>
-          <span className="doc-badge__info">
-            {attachedDoc.char_count.toLocaleString()} ký tự
-            {attachedDoc.truncated && " (đã cắt)"}
-          </span>
-          <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
-            <X size={14} />
-          </button>
-        </div>
-      )}
+      {activeTab === "calendar" ? (
+        <CalendarTab />
+      ) : (
+        <>
+          {/* Document badge (đã upload trước đó) */}
+          {attachedDoc && (
+            <div className="doc-badge">
+              <span className="doc-badge__icon"><FileText size={16} /></span>
+              <span className="doc-badge__name">{attachedDoc.filename}</span>
+              <span className="doc-badge__info">
+                {attachedDoc.char_count.toLocaleString()} ký tự
+                {attachedDoc.truncated && " (đã cắt)"}
+              </span>
+              <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
-      {/* Messages */}
-      <div className="chat-messages">
-        {messages.length === 0 && (
+          {/* Messages */}
+          <div className="chat-messages">
+            {messages.length === 0 && (
           <div className="chat-empty">
             <div className="chat-empty__icon"><Bot size={48} className="text-blue-500 mx-auto" /></div>
             <h2>Xin chào! Tôi là AIA</h2>
@@ -488,6 +501,8 @@ export default function ChatWindow() {
           {isLoading || isUploading ? <Hourglass size={20} /> : <Send size={20} />}
         </button>
       </div>
+      </>
+      )}
 
       {/* Profile Modal */}
       {showProfile && (

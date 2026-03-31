@@ -21,6 +21,8 @@ export interface SuggestedAction {
     participants?: string[];
     proposed_time?: string | null;
     reply_body?: string | null;
+    note?: string | null;
+    weather_dependent?: boolean;
   };
 }
 
@@ -60,6 +62,8 @@ function buildExecutePayload(action: SuggestedAction, proposal: Proposal) {
       recipients: action.payload.participants ?? [],
       event_id: undefined as string | undefined,
       proposed_time: action.payload.proposed_time ?? undefined,
+      note: action.payload.note || undefined,
+      weather_dependent: action.payload.weather_dependent || false,
     };
   }
   // Fallback cho news agent legacy format
@@ -162,7 +166,11 @@ export function useProposals() {
   }, []);
 
   const approveProposal = useCallback(
-    async (id: string, actionIndex = 0, modifiedPayload?: { reply_body?: string; participants?: string[] }) => {
+    async (
+      id: string,
+      actionIndex = 0,
+      modifiedPayload?: { reply_body?: string; participants?: string[]; note?: string; weather_dependent?: boolean }
+    ) => {
       const proposal = proposals.find((p) => p.id === id);
       if (!proposal || proposal.status !== "pending") return;
 
@@ -186,6 +194,8 @@ export function useProposals() {
           if (modifiedPayload) {
             if (modifiedPayload.reply_body !== undefined) execPayload.body = modifiedPayload.reply_body;
             if (modifiedPayload.participants !== undefined) execPayload.recipients = modifiedPayload.participants;
+            if (modifiedPayload.note !== undefined) execPayload.note = modifiedPayload.note;
+            if (modifiedPayload.weather_dependent !== undefined) execPayload.weather_dependent = modifiedPayload.weather_dependent;
           }
         } else {
           execPayload = {

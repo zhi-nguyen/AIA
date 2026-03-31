@@ -12,7 +12,7 @@ import type { Proposal, SuggestedAction } from "@/hooks/useProposals";
 
 interface ProposalCardProps {
   proposal: Proposal;
-  onApprove: (id: string, actionIndex?: number, modifiedPayload?: { reply_body?: string; participants?: string[] }) => void;
+  onApprove: (id: string, actionIndex?: number, modifiedPayload?: { reply_body?: string; participants?: string[]; note?: string; weather_dependent?: boolean }) => void;
   onDismiss: (id: string) => void;
 }
 
@@ -37,33 +37,7 @@ function ConfidenceBadge({ confidence }: { confidence?: number }) {
   );
 }
 
-function buildGoogleCalendarUrl(action: SuggestedAction, proposal: Proposal): string {
-  const p = action.payload;
-  const title = p.title || proposal.email_subject || "Lịch hẹn (Đề xuất)";
-  const details = `Đề xuất tạo lịch tự động từ AIA.\n\nEmail gốc: ${proposal.email_subject}\nNgười gửi: ${proposal.email_from}\n\nNội dung AI dự kiến trả lời:\n${p.reply_body || ""}`;
-  const add = (p.participants || []).join(",");
 
-  let dates = "";
-  if (p.proposed_time) {
-    try {
-      const start = new Date(p.proposed_time);
-      const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour
-      const fmt = (d: Date) => d.toISOString().replace(/-|:|\.\d\d\d/g, "");
-      dates = `${fmt(start)}/${fmt(end)}`;
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  const params = new URLSearchParams();
-  params.set("action", "TEMPLATE");
-  params.set("text", title);
-  if (dates) params.set("dates", dates);
-  params.set("details", details);
-  if (add) params.set("add", add);
-
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
-}
 
 export default function ProposalCard({ proposal, onApprove, onDismiss }: ProposalCardProps) {
   const { id, source, status, error, timestamp } = proposal;
@@ -97,6 +71,8 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
   const [editBody, setEditBody] = useState("");
   const [editParticipants, setEditParticipants] = useState<string[]>([]);
   const [newParticipant, setNewParticipant] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editWeatherDependent, setEditWeatherDependent] = useState(false);
 
   const handleActionClick = (idx: number, action: SuggestedAction) => {
     if (action.action_type === "ignore") {
@@ -119,11 +95,18 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
     
     // Dùng participants từ action (đã chuẩn hoá ở trên thành 'participants')
     setEditParticipants(action.payload?.participants || []);
+    setEditNote(action.payload?.note || "");
+    setEditWeatherDependent(action.payload?.weather_dependent || false);
   };
 
   const handleSendModified = () => {
     if (editingIndex === null) return;
-    onApprove(id, editingIndex, { reply_body: editBody, participants: editParticipants });
+    onApprove(id, editingIndex, { 
+      reply_body: editBody, 
+      participants: editParticipants,
+      note: editNote,
+      weather_dependent: editWeatherDependent
+    });
   };
 
   return (
@@ -169,24 +152,35 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
             <div style={{ padding: "12px", background: "rgba(66, 133, 244, 0.1)", borderRadius: "6px", marginBottom: "12px", display: "flex", flexDirection: "column", gap: "10px", border: "1px solid rgba(66, 133, 244, 0.3)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                 <Calendar size={16} color="#60a5fa" />
-                <span style={{ fontSize: "13px", fontWeight: 600, color: "#60a5fa" }}>Lịch hẹn đã đề xuất</span>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#60a5fa" }}>Lưu Cuộc Hẹn Nội Bộ</span>
               </div>
               <div style={{ fontSize: "12px", color: "#cbd5e1" }}>
                 <div><strong style={{ opacity: 0.8 }}>Tiêu đề:</strong> {actions[editingIndex].payload?.title || proposal.email_subject}</div>
                 <div><strong style={{ opacity: 0.8 }}>Thời gian:</strong> {actions[editingIndex].payload?.proposed_time ? new Date(actions[editingIndex].payload.proposed_time!).toLocaleString("vi-VN") : "Chưa rõ thời gian cụ thể"}</div>
               </div>
-              <a 
-                href={buildGoogleCalendarUrl(actions[editingIndex], proposal)}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 12px", 
-                  background: "#4285f4", color: "white", textDecoration: "none", borderRadius: "6px", 
-                  fontSize: "13px", fontWeight: 500, width: "fit-content", marginTop: "4px"
-                }}
-              >
-                <ExternalLink size={14} /> Mở trong Google Calendar
-              </a>
+
+              {/* Note / Tóm tắt */}
+              <div style={{ marginTop: "8px" }}>
+                <label style={{ display: "block", fontSize: "12px", marginBottom: "6px", color: "#94a3b8" }}>Ghi chú công việc / Địa điểm:</label>
+                <textarea
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  style={{ width: "100%", padding: "8px", borderRadius: "6px", background: "rgba(0,0,0,0.3)", border: "1px solid #555", color: "white", fontSize: "13px", resize: "none" }}
+                  rows={2}
+                  placeholder="Tham luận dự án..."
+                />
+              </div>
+
+              {/* Weather Conditional */}
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#e2e8f0", marginTop: "4px", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={editWeatherDependent}
+                  onChange={(e) => setEditWeatherDependent(e.target.checked)}
+                  style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                />
+                Lịch trình ngoài trời / Có thể bị ảnh hưởng bởi thời tiết
+              </label>
             </div>
           )}
 
@@ -283,18 +277,9 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
               Hoàn thành! Đã lưu Database & Gửi Email.
             </button>
             {actions[proposal.activeActionIndex]?.action_type === "create_event" && (
-              <a 
-                href={buildGoogleCalendarUrl(actions[proposal.activeActionIndex], proposal)}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "flex", justifyContent: "center", alignItems: "center", gap: "6px", padding: "8px", 
-                  background: "#4285f4", color: "white", textDecoration: "none", borderRadius: "6px", 
-                  fontSize: "13px", fontWeight: 500
-                }}
-              >
-                <ExternalLink size={14} /> Mở Google Calendar
-              </a>
+              <span style={{ fontSize: "12px", color: "#60a5fa", textAlign: "center" }}>
+                (Sự kiện đã được đồng bộ vào Tab "Lịch hẹn")
+              </span>
             )}
           </div>
         )}

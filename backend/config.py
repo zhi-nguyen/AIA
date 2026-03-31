@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     vertex_search_data_store_id: str = "aia-ds_1774321984667"
     data_store_credentials_path: str = os.path.join(os.path.dirname(__file__), "data-store-key.json")
 
+    # === Gmail Push (Pub/Sub Watch) ===
+    pubsub_project_id: str = "xiaoyue-api"
+    pubsub_topic_id: str = "gmail-push"
+    pubsub_subscription_id: str = "gmail-push-sub"
     # === Vector Store ===
     embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"
