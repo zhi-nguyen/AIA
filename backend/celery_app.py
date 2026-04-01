@@ -18,7 +18,10 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     broker_connection_retry_on_startup=True,
-    # Beat schedule removed — email polling replaced by Gmail Watch + Pub/Sub
+    beat_schedule={
+        "fetch-weather-data": {
+            "task": "tasks.fetch_weather_for_events",
+            "schedule": 3600.0,  # Every 1 hour
+        },
+    },
 )
-
-

@@ -76,6 +76,7 @@ def initialize_user_profile(user_id: str, profile: dict) -> bool:
     Thông tin người dùng (User ID: {user_id}):
     - Tên: {profile.get('name', 'Chưa đặt')}
     - Nghề nghiệp: {profile.get('occupation', 'Chưa rõ')}
+    - Địa chỉ: {profile.get('address', 'Chưa rõ')}
     - Sở thích: {', '.join(profile.get('interests', []))}
     - Nguồn tin ưa thích: {', '.join(profile.get('preferred_news_sources', []))}
     - Phong cách làm việc: {profile.get('work_style', 'Chưa rõ')}
@@ -121,6 +122,10 @@ def get_user_profile(user_id: str) -> Optional[dict]:
         occ_match = re.search(r"- Nghề nghiệp:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if occ_match:
             profile["occupation"] = occ_match.group(1).strip()
+
+        addr_match = re.search(r"- Địa chỉ:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
+        if addr_match:
+            profile["address"] = addr_match.group(1).strip()
 
         interests_match = re.search(r"- Sở thích:\s*(.*?)(?=\s*- \w|$)", result, re.DOTALL)
         if interests_match:

@@ -32,6 +32,7 @@ export interface UserProfile {
   user_id?: string;
   name: string;
   occupation?: string;
+  address?: string;
   interests?: string[];
   preferred_news_sources?: string[];
   work_style?: string;
@@ -395,6 +396,18 @@ export async function getEvents(): Promise<any> {
   const res = await fetchWithAuth(`${API_BASE_URL}/events`);
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to fetch events" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Lấy dữ liệu thời tiết mới nhất cho vị trí user
+ */
+export async function getWeather(): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/weather`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch weather" }));
     throw new Error(error.detail || `HTTP ${res.status}`);
   }
   return res.json();

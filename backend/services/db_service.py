@@ -79,6 +79,15 @@ async def init_db_tables(pool: asyncpg.Pool):
             ADD COLUMN IF NOT EXISTS weather_dependent BOOLEAN DEFAULT FALSE;
         """)
 
+        # Add address + geocoding columns to users
+        await conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS address TEXT,
+            ADD COLUMN IF NOT EXISTS address_lat DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS address_lon DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS address_province TEXT;
+        """)
+
         # Bảng lưu các đề xuất email đang chờ người dùng phản hồi
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS pending_proposals (
@@ -87,6 +96,18 @@ async def init_db_tables(pool: asyncpg.Pool):
                 gmail_id VARCHAR(255),
                 payload JSONB NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Bảng lưu dữ liệu thời tiết từ WeatherAPI
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS weather_data (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                location_name TEXT NOT NULL,
+                latitude DOUBLE PRECISION NOT NULL,
+                longitude DOUBLE PRECISION NOT NULL,
+                data JSONB NOT NULL,
+                fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -362,4 +383,112 @@ async def get_user_id_by_email(email: str) -> str | None:
             email,
         )
         return row["id"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Address + Weather helpers
+# ---------------------------------------------------------------------------
+
+async def update_user_address(
+    user_id: str,
+    address: str,
+    lat: float,
+    lon: float,
+    province: str,
+) -> None:
+    """Lưu địa chỉ + tọa độ (cấp tỉnh/thành phố) cho user."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE users
+            SET address = $1,
+                address_lat = $2,
+                address_lon = $3,
+                address_province = $4
+            WHERE id = $5::uuid
+            """,
+            address, lat, lon, province, user_id,
+        )
+
+
+async def get_user_address(user_id: str) -> dict | None:
+    """Lấy thông tin địa chỉ + tọa độ của user."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT address, address_lat, address_lon, address_province FROM users WHERE id = $1::uuid",
+            user_id,
+        )
+        if row and row["address"]:
+            return dict(row)
+        return None
+
+
+async def get_weather_dependent_locations() -> list[dict]:
+    """
+    Lấy danh sách unique (lat, lon, province) của các user có lịch hẹn
+    weather_dependent=true. Gộp user cùng tỉnh/thành phố để chỉ call API 1 lần.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT u.address_lat AS lat,
+                            u.address_lon AS lon,
+                            u.address_province AS province
+            FROM pending_events pe
+            JOIN users u ON u.id = pe.user_id
+            WHERE pe.weather_dependent = true
+              AND pe.status IN ('pending', 'confirmed')
+              AND u.address_lat IS NOT NULL
+              AND u.address_lon IS NOT NULL
+            """
+        )
+        return [dict(r) for r in rows]
+
+
+async def save_weather_data(
+    location_name: str,
+    lat: float,
+    lon: float,
+    data: dict,
+) -> str:
+    """Lưu response từ WeatherAPI vào DB."""
+    pool = await get_db_pool()
+    weather_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO weather_data (id, location_name, latitude, longitude, data)
+            VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
+            """,
+            weather_id, location_name, lat, lon, json.dumps(data, ensure_ascii=False),
+        )
+    return weather_id
+
+
+async def get_latest_weather_for_user(user_id: str) -> dict | None:
+    """
+    Lấy dữ liệu thời tiết mới nhất cho vị trí của user.
+    Match bằng address_province.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT wd.location_name, wd.latitude, wd.longitude, wd.data, wd.fetched_at
+            FROM weather_data wd
+            JOIN users u ON u.address_province = wd.location_name
+            WHERE u.id = $1::uuid
+            ORDER BY wd.fetched_at DESC
+            LIMIT 1
+            """,
+            user_id,
+        )
+        if row:
+            result = dict(row)
+            result["data"] = json.loads(result["data"]) if isinstance(result["data"], str) else result["data"]
+            return result
+        return None
 

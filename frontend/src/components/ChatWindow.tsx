@@ -13,10 +13,11 @@ import { useVoice } from "@/hooks/useVoice";
 import { uploadFile, uploadImage, clearDocument, getGoogleAuthUrl, initSession, downloadAgentScript, provisionAgentToken, type UploadResult } from "@/lib/api";
 import MessageBubble from "@/components/MessageBubble";
 import UserProfileForm from "@/components/UserProfileForm";
-import ProposalCard from "@/components/EmailCard";
-import CalendarTab from "@/components/CalendarTab";
+import ProposalSidebar from "@/components/ProposalSidebar";
+import CalendarSidebar from "@/components/CalendarSidebar";
+import WeatherSidebar from "@/components/WeatherSidebar";
 import { useProposals } from "@/hooks/useProposals";
-import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell, Calendar } from "lucide-react";
+import { Mic, Square, Hourglass, Paperclip, Settings, Trash2, FileText, X, Send, Bot, Mail, Newspaper, Volume2, Download, Key, Copy, Check, Bell, Calendar, CloudSun } from "lucide-react";
 
 // Image extensions
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -41,7 +42,6 @@ export default function ChatWindow() {
   const { proposals, approveProposal, dismissProposal } = useProposals();
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   const [input, setInput] = useState("");
-  const [activeTab, setActiveTab] = useState<"chat" | "calendar">("chat");
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -53,13 +53,19 @@ export default function ChatWindow() {
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [pendingFileType, setPendingFileType] = useState<"document" | "image" | null>(null);
 
-  // Proposal UI State
-  const [showProposalsPanel, setShowProposalsPanel] = useState(false);
+  // Unified sidebar state — chỉ 1 sidebar mở tại 1 thời điểm
+  const [activeSidebar, setActiveSidebar] = useState<"calendar" | "weather" | "proposals" | null>(null);
   const prevProposalsLength = useRef(0);
+
+  const openSidebar = (name: "calendar" | "weather" | "proposals") => {
+    setActiveSidebar((prev) => (prev === name ? null : name));
+  };
+
+  const closeSidebar = () => setActiveSidebar(null);
 
   useEffect(() => {
     if (proposals.length > prevProposalsLength.current) {
-      setShowProposalsPanel(true);
+      setActiveSidebar("proposals");
     }
     prevProposalsLength.current = proposals.length;
   }, [proposals.length]);
@@ -268,16 +274,23 @@ export default function ChatWindow() {
             <Settings size={20} />
           </button>
           <button
-            className={`chat-header__btn ${activeTab === 'calendar' ? 'active text-blue-400' : ''}`}
-            onClick={() => setActiveTab(activeTab === 'calendar' ? 'chat' : 'calendar')}
+            className={`chat-header__btn ${activeSidebar === 'calendar' ? 'active text-blue-400' : ''}`}
+            onClick={() => openSidebar('calendar')}
             title="Lịch hẹn cá nhân"
           >
             <Calendar size={20} />
           </button>
           <button
-            className="chat-header__btn"
+            className={`chat-header__btn ${activeSidebar === 'weather' ? 'active text-blue-400' : ''}`}
+            onClick={() => openSidebar('weather')}
+            title="Thời tiết"
+          >
+            <CloudSun size={20} />
+          </button>
+          <button
+            className={`chat-header__btn ${activeSidebar === 'proposals' ? 'active text-blue-400' : ''}`}
             style={{ position: "relative" }}
-            onClick={() => setShowProposalsPanel(prev => !prev)}
+            onClick={() => openSidebar('proposals')}
             title="Đề xuất & Cuộc hẹn"
           >
             <Bell size={20} />
@@ -341,28 +354,24 @@ export default function ChatWindow() {
         </div>
       </header>
 
-      {activeTab === "calendar" ? (
-        <CalendarTab />
-      ) : (
-        <>
-          {/* Document badge (đã upload trước đó) */}
-          {attachedDoc && (
-            <div className="doc-badge">
-              <span className="doc-badge__icon"><FileText size={16} /></span>
-              <span className="doc-badge__name">{attachedDoc.filename}</span>
-              <span className="doc-badge__info">
-                {attachedDoc.char_count.toLocaleString()} ký tự
-                {attachedDoc.truncated && " (đã cắt)"}
-              </span>
-              <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
-                <X size={14} />
-              </button>
-            </div>
-          )}
+      {/* Document badge (đã upload trước đó) */}
+      {attachedDoc && (
+        <div className="doc-badge">
+          <span className="doc-badge__icon"><FileText size={16} /></span>
+          <span className="doc-badge__name">{attachedDoc.filename}</span>
+          <span className="doc-badge__info">
+            {attachedDoc.char_count.toLocaleString()} ký tự
+            {attachedDoc.truncated && " (đã cắt)"}
+          </span>
+          <button className="doc-badge__close" onClick={handleClearDoc} title="Xóa tài liệu">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
-          {/* Messages */}
-          <div className="chat-messages">
-            {messages.length === 0 && (
+      {/* Messages */}
+      <div className="chat-messages">
+        {messages.length === 0 && (
           <div className="chat-empty">
             <div className="chat-empty__icon"><Bot size={48} className="text-blue-500 mx-auto" /></div>
             <h2>Xin chào! Tôi là AIA</h2>
@@ -501,8 +510,6 @@ export default function ChatWindow() {
           {isLoading || isUploading ? <Hourglass size={20} /> : <Send size={20} />}
         </button>
       </div>
-      </>
-      )}
 
       {/* Profile Modal */}
       {showProfile && (
@@ -553,29 +560,16 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* Proposal Toast Stack / Sidebar */}
-      {showProposalsPanel && (
-        <div className="proposal-toast-container" style={{ background: 'rgba(20,20,30,0.95)', padding: '15px', borderRadius: '12px', border: '1px solid #333', maxHeight: '80vh', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid #444', paddingBottom: '10px' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>Đề xuất cần xác nhận ({proposals.length})</h3>
-            <button onClick={() => setShowProposalsPanel(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }}>
-              <X size={20} />
-            </button>
-          </div>
-          {proposals.length === 0 ? (
-            <div style={{ padding: '20px', textAlign: 'center', opacity: 0.7 }}>Không có đề xuất nào đang chờ.</div>
-          ) : (
-            proposals.map(proposal => (
-              <ProposalCard 
-                key={proposal.id}
-                proposal={proposal}
-                onApprove={approveProposal}
-                onDismiss={dismissProposal}
-              />
-            ))
-          )}
-        </div>
-      )}
+      {/* === SIDEBARS (tái sử dụng CSS chung, mutual exclusion) === */}
+      <CalendarSidebar isOpen={activeSidebar === 'calendar'} onClose={closeSidebar} />
+      <WeatherSidebar isOpen={activeSidebar === 'weather'} onClose={closeSidebar} />
+      <ProposalSidebar
+        isOpen={activeSidebar === 'proposals'}
+        onClose={closeSidebar}
+        proposals={proposals}
+        onApprove={approveProposal}
+        onDismiss={dismissProposal}
+      />
     </div>
   );
 }
