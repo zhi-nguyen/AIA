@@ -144,3 +144,63 @@ def process_user_emails(self, user_id: str):
     loop = get_or_create_eventloop()
     loop.run_until_complete(_run())
 
+
+# ── Weather Fetch task (Celery Beat — every 1 hour) ────────────────────────
+
+@celery_app.task(bind=True, name="tasks.fetch_weather_for_events")
+def fetch_weather_for_events(self):
+    """
+    Lấy dữ liệu thời tiết cho tất cả tỉnh/thành phố có user có lịch hẹn
+    weather_dependent=true. Gộp cùng tỉnh/thành phố → call API 1 lần.
+    """
+    import asyncio
+    import traceback
+    import requests
+    import json
+
+    async def _run():
+        from services.db_service import get_weather_dependent_locations, save_weather_data
+        from config import get_settings
+
+        settings = get_settings()
+        locations = await get_weather_dependent_locations()
+
+        if not locations:
+            print("[WeatherTask] Không có location nào cần lấy thời tiết.")
+            return
+
+        print(f"[WeatherTask] Tìm thấy {len(locations)} location(s) cần lấy thời tiết.")
+
+        for loc in locations:
+            lat = loc["lat"]
+            lon = loc["lon"]
+            province = loc.get("province", f"{lat},{lon}")
+
+            try:
+                url = (
+                    f"http://api.weatherapi.com/v1/forecast.json"
+                    f"?key={settings.weather_api_key}"
+                    f"&q={lat},{lon}"
+                    f"&days=1"
+                    f"&aqi=no"
+                    f"&alerts=yes"
+                )
+                resp = requests.get(url, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+
+                await save_weather_data(
+                    location_name=province,
+                    lat=lat,
+                    lon=lon,
+                    data=data,
+                )
+                print(f"[WeatherTask] ✓ {province} ({lat},{lon}) — "
+                      f"temp={data.get('current', {}).get('temp_c', '?')}°C")
+
+            except Exception as e:
+                print(f"[WeatherTask] ✗ {province}: {e}")
+                traceback.print_exc()
+
+    loop = get_or_create_eventloop()
+    loop.run_until_complete(_run())

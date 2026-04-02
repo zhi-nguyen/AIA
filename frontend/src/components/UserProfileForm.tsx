@@ -131,6 +131,22 @@ export default function UserProfileForm({ onClose }: UserProfileFormProps) {
             />
           </div>
 
+          {/* Địa chỉ */}
+          <div className="profile-field">
+            <label className="profile-label">Địa chỉ</label>
+            <input
+              id="profile-address"
+              className="profile-input"
+              type="text"
+              placeholder="VD: 123 Nguyễn Văn Cừ, Ninh Kiều, Cần Thơ..."
+              value={profile.address}
+              onChange={(e) => updateField("address", e.target.value)}
+            />
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+              Hệ thống sẽ tự động xác định tọa độ tỉnh/thành phố để lấy thời tiết
+            </span>
+          </div>
+
           {/* Sở thích */}
           <div className="profile-field">
             <label className="profile-label">Sở thích</label>

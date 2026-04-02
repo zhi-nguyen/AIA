@@ -90,6 +90,7 @@ class UserProfileRequest(BaseModel):
     interests: list[str] = []
     preferred_news_sources: list[str] = []
     work_style: str = ""
+    address: str = ""
 
 
 class TTSRequest(BaseModel):
@@ -353,7 +354,11 @@ async def get_profile(user_id: str = Depends(get_current_user_id)):
 
 
 @router.post("/user/profile")
-async def create_user_profile(request: UserProfileRequest, user_id: str = Depends(get_current_user_id)):
+async def create_user_profile(
+    request: UserProfileRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user_id),
+):
     """Khởi tạo hoặc cập nhật profile người dùng"""
     try:
         success = initialize_user_profile(
@@ -364,13 +369,53 @@ async def create_user_profile(request: UserProfileRequest, user_id: str = Depend
                 "interests": request.interests,
                 "preferred_news_sources": request.preferred_news_sources,
                 "work_style": request.work_style,
+                "address": request.address,
             },
         )
 
-        if success:
-            return {"status": "ok", "message": f"Đã lưu profile cho {request.name}"}
-        else:
+        if not success:
             raise HTTPException(status_code=500, detail="Không thể lưu profile")
+
+        # Background: nếu có address → gọi Gemini Flash để geocode tỉnh/thành phố
+        if request.address.strip():
+            async def _geocode_address():
+                try:
+                    from llm.gemini_client import get_gemini_client
+                    from services.db_service import update_user_address
+                    import json as _json
+
+                    client = get_gemini_client()
+                    prompt = (
+                        f'Cho địa chỉ sau: "{request.address}"\n'
+                        'Hãy xác định tỉnh/thành phố tương ứng và trả về tọa độ '
+                        'ở mức tỉnh/thành phố dưới dạng JSON với format:\n'
+                        '{"province": "Tên tỉnh/thành phố", "latitude": 10.0452, "longitude": 105.7469}\n'
+                        'Chỉ trả về JSON, không giải thích thêm.'
+                    )
+                    raw = client.generate_flash(
+                        prompt=prompt,
+                        response_mime_type="application/json",
+                    )
+                    geo = _json.loads(raw)
+                    lat = float(geo["latitude"])
+                    lon = float(geo["longitude"])
+                    province = geo["province"]
+
+                    await update_user_address(
+                        user_id=user_id,
+                        address=request.address.strip(),
+                        lat=lat,
+                        lon=lon,
+                        province=province,
+                    )
+                    print(f"[Geocode] User {user_id[:8]}… → {province} ({lat}, {lon})")
+                except Exception as geo_err:
+                    print(f"[Geocode] Error for user {user_id[:8]}…: {geo_err}")
+                    traceback.print_exc()
+
+            background_tasks.add_task(_geocode_address)
+
+        return {"status": "ok", "message": f"Đã lưu profile cho {request.name}"}
 
     except HTTPException:
         raise
@@ -618,3 +663,38 @@ async def delete_proposal(proposal_id: str, user_id: str = Depends(get_current_u
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# === Weather Endpoint ===
+
+@router.get("/weather")
+async def get_weather(user_id: str = Depends(get_current_user_id)):
+    """Lấy dữ liệu thời tiết mới nhất cho vị trí của user."""
+    from services.db_service import get_latest_weather_for_user, get_user_address
+    from datetime import datetime
+
+    try:
+        # Kiểm tra user có địa chỉ chưa
+        addr = await get_user_address(user_id)
+        if not addr:
+            return {"status": "no_address", "message": "Chưa có địa chỉ. Vui lòng cập nhật profile."}
+
+        weather = await get_latest_weather_for_user(user_id)
+        if not weather:
+            return {
+                "status": "no_data",
+                "address": addr,
+                "message": "Chưa có dữ liệu thời tiết. Hệ thống sẽ cập nhật tự động mỗi giờ.",
+            }
+
+        # Format fetched_at
+        if isinstance(weather.get("fetched_at"), datetime):
+            weather["fetched_at"] = weather["fetched_at"].isoformat()
+
+        return {
+            "status": "ok",
+            "address": addr,
+            "weather": weather,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

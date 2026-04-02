@@ -11,6 +11,7 @@ import { getUserProfile, createUserProfile, type UserProfile } from "@/lib/api";
 interface ProfileFormState {
   name: string;
   occupation: string;
+  address: string;
   interests: string[];
   preferred_news_sources: string[];
   work_style: string;
@@ -19,6 +20,7 @@ interface ProfileFormState {
 const DEFAULT_STATE: ProfileFormState = {
   name: "",
   occupation: "",
+  address: "",
   interests: [],
   preferred_news_sources: [],
   work_style: "",
@@ -42,6 +44,7 @@ export function useUserProfile() {
           setProfile({
             name: res.profile.name || "",
             occupation: res.profile.occupation || "",
+            address: res.profile.address || "",
             interests: res.profile.interests || [],
             preferred_news_sources: res.profile.preferred_news_sources || [],
             work_style: res.profile.work_style || "",
@@ -79,6 +82,7 @@ export function useUserProfile() {
       await createUserProfile({
         name: profile.name.trim(),
         occupation: profile.occupation.trim(),
+        address: profile.address.trim(),
         interests: profile.interests,
         preferred_news_sources: profile.preferred_news_sources,
         work_style: profile.work_style.trim(),

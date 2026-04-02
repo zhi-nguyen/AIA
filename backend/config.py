@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     pubsub_project_id: str = "xiaoyue-api"
     pubsub_topic_id: str = "gmail-webhook-topic"
     pubsub_subscription_id: str = "gmail-webhook-sub"
+
+    # === Weather API ===
+    weather_api_key: str = "73e3eb1ff1994efa92d111618260104"
+
     # === Vector Store ===
     embedding_dimension: int = 3072  # gemini-embedding-001 dimension
     collection_name: str = "aia_user_memory"
