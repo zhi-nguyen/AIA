@@ -113,16 +113,22 @@ def _get_header(headers: list, name: str) -> str:
 _MEETING_PATTERN = re.compile(
     r"("
     # Tiếng Việt
-    r"hẹn|gặp|họ p|hợp|lịch|mời|thời gian|thời điểm"
-    r"|buổi|sáng|chiều|tối|mai|ngày mai|tuần tới|lúc nào"
+    r"hẹn|gặp|gặp mặt|họp|hợp|lịch|đặt lịch|mời|thời gian|thời điểm"
+    r"|buổi|sáng|chiều|tối|mai|ngày mai|tuần tới|tuần sau|lúc nào"
     r"|vào lúc|vào ngày|cuối tuần|cuối tháng|chiều nay|sáng nay|tối nay"
-    r"|cuộc hẹn|kế hoạch|thuần tiện|tiện không|có thể gặp"
+    r"|cuộc hẹn|kế hoạch|thuận tiện|tiện không|có thể gặp|có rảnh|khi nào rảnh"
+    r"|bố trí|sắp xếp|tham gia|trao đổi|thảo luận|bàn bạc"
+    r"|phỏng vấn|tư vấn|sự kiện|hội thảo|buổi lễ|cafe|cà phê|quán"
+    r"|nhậu|ăn|ăn trưa|ăn tối|nhâm nhi|hẹn hò|giao lưu|chốt lịch|thống nhất lịch"
+    r"|rảnh|bận|dự định|ra ngoài|ghé|tới|qua|gặp nhau"
     # Tiếng Anh
-    r"|meeting|schedule|appointment|calendar|invite|invitation"
-    r"|call|sync|standup|stand-up|huddle|catch.?up"
-    r"|available|availability|free slot|time slot"
+    r"|meeting|schedule|appointment|calendar|invite|invitation|booking"
+    r"|call|sync|standup|stand-up|huddle|catch.?up|chat|discuss|discussion"
+    r"|interview|event|webinar|seminar|session|workshop"
+    r"|available|availability|free slot|time slot|let's meet|get together"
+    r"|coffee|lunch|dinner|breakfast|drinks|meal"
     r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r"|tomorrow|next week|this week|\d{1,2}[:/h]\d{2}"
+    r"|tomorrow|next week|this week|next month|\d{1,2}[:/hH]\d{0,2}"
     r")",
     re.IGNORECASE | re.UNICODE,
 )
@@ -344,14 +350,24 @@ async def send_email(
         {"success": True, "message_id": "..."} hoặc {"success": False, "error": "..."}
     """
     from email.mime.text import MIMEText
+    from email.utils import parseaddr, formataddr
     import base64
 
     try:
         service = await _get_gmail_service(user_id)
 
+        # ── Format lại danh sách email để hỗ trợ Unicode Tên người dùng ─────
+        formatted_recipients = []
+        for r in recipients:
+            name, addr = parseaddr(str(r))
+            if not addr:
+                formatted_recipients.append(str(r))
+            else:
+                formatted_recipients.append(formataddr((name, addr)))
+
         # Tạo MIME message
         message = MIMEText(body, "plain", "utf-8")
-        message["to"] = ", ".join(recipients)
+        message["To"] = ", ".join(formatted_recipients)
         message["subject"] = subject
 
         # Encode thành base64url

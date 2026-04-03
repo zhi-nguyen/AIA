@@ -76,7 +76,9 @@ async def init_db_tables(pool: asyncpg.Pool):
         await conn.execute("""
             ALTER TABLE pending_events 
             ADD COLUMN IF NOT EXISTS note TEXT,
-            ADD COLUMN IF NOT EXISTS weather_dependent BOOLEAN DEFAULT FALSE;
+            ADD COLUMN IF NOT EXISTS weather_dependent BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS weather_alerted BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS weather_task_id TEXT;
         """)
 
         # Add address + geocoding columns to users
@@ -293,7 +295,7 @@ async def get_user_events(user_id: str) -> list[dict]:
             """
             SELECT id, title, participants, proposed_time, status, note, weather_dependent, created_at 
             FROM pending_events 
-            WHERE user_id = $1::uuid 
+            WHERE user_id = $1::uuid AND status != 'cancelled'
             ORDER BY proposed_time ASC NULLS LAST
             """,
             user_id
@@ -308,6 +310,35 @@ async def update_event_status(event_id: str, status: str) -> None:
         await conn.execute(
             "UPDATE pending_events SET status = $1 WHERE id = $2::uuid",
             status, event_id,
+        )
+
+async def update_pending_event_details(
+    event_id: str,
+    title: str,
+    participants: list[str],
+    proposed_time: datetime | None,
+    note: str | None,
+    weather_dependent: bool
+) -> None:
+    """Cập nhật chi tiết nội dung sự kiện."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE pending_events 
+            SET title = $1, participants = $2, proposed_time = $3, note = $4, weather_dependent = $5
+            WHERE id = $6::uuid
+            """,
+            title, participants, proposed_time, note, weather_dependent, event_id
+        )
+
+async def delete_pending_event(event_id: str) -> None:
+    """Xóa hẳn một sự kiện khỏi cơ sở dữ liệu."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM pending_events WHERE id = $1::uuid",
+            event_id
         )
 
 # ---------------------------------------------------------------------------
@@ -492,3 +523,98 @@ async def get_latest_weather_for_user(user_id: str) -> dict | None:
             return result
         return None
 
+
+async def get_events_in_bad_weather_window(
+    bad_hours: list[str],
+    province: str,
+) -> list[dict]:
+    """
+    Tìm events có weather_dependent=true, chưa bị cảnh báo,
+    có proposed_time nằm trong các khung giờ thời tiết xấu.
+    bad_hours: list of "YYYY-MM-DD HH:00" strings.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT pe.id, pe.user_id::text AS user_id, pe.title, pe.participants,
+                   pe.proposed_time, pe.note, pe.weather_dependent,
+                   u.email, u.address_province, u.address_lat, u.address_lon
+            FROM pending_events pe
+            JOIN users u ON u.id = pe.user_id
+            WHERE pe.weather_dependent = true
+              AND pe.status IN ('pending', 'confirmed')
+              AND pe.weather_alerted = false
+              AND u.address_province = $1
+              AND to_char(pe.proposed_time AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:00') = ANY($2::text[])
+            """,
+            province, bad_hours,
+        )
+        return [dict(r) for r in rows]
+
+
+async def mark_event_weather_alerted(event_id: str, task_id: str | None = None) -> None:
+    """Đánh dấu event đã gửi cảnh báo thời tiết."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        if task_id:
+            await conn.execute(
+                "UPDATE pending_events SET weather_alerted = true, weather_task_id = $2 WHERE id = $1::uuid",
+                event_id, task_id,
+            )
+        else:
+            await conn.execute(
+                "UPDATE pending_events SET weather_alerted = true WHERE id = $1::uuid",
+                event_id,
+            )
+
+
+async def save_event_weather_task_id(event_id: str, task_id: str) -> None:
+    """Lưu Celery task ID vào event để revoke khi cần."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE pending_events SET weather_task_id = $1 WHERE id = $2::uuid",
+            task_id, event_id,
+        )
+
+
+async def get_event_by_id(event_id: str) -> dict | None:
+    """Lấy thông tin 1 event theo ID."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT pe.id, pe.user_id::text AS user_id, pe.title, pe.participants,
+                   pe.proposed_time, pe.status, pe.note, pe.weather_dependent,
+                   pe.weather_alerted, pe.weather_task_id
+            FROM pending_events pe
+            WHERE pe.id = $1::uuid
+            """,
+            event_id,
+        )
+        return dict(row) if row else None
+
+
+async def get_weather_data_for_location(province: str, max_age_hours: int = 2) -> dict | None:
+    """
+    Lấy weather_data mới nhất (< max_age_hours) cho 1 location.
+    Trả về parsed JSON data hoặc None.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT data, fetched_at
+            FROM weather_data
+            WHERE location_name = $1
+              AND fetched_at > NOW() - INTERVAL '1 hour' * $2
+            ORDER BY fetched_at DESC
+            LIMIT 1
+            """,
+            province, max_age_hours,
+        )
+        if row:
+            data = row["data"]
+            return json.loads(data) if isinstance(data, str) else data
+        return None

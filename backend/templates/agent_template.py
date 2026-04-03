@@ -161,12 +161,42 @@ async def execute_action(data: dict) -> dict:
 
 def prompt_for_new_token():
     root = tk.Tk()
-    root.withdraw()
+    root.title("AIA Agent - Cập nhật Token")
+    
+    window_width = 400
+    window_height = 150
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = int((screen_width / 2) - (window_width / 2))
+    y = int((screen_height / 2) - (window_height / 2))
+    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
     root.attributes('-topmost', True)
-    messagebox.showwarning("Connection Failed", "Connection failed 5 times. The token may have expired or was modified. Please generate a new token from the web interface and enter it here.", parent=root)
-    new_token = simpledialog.askstring("Input", "Enter new AIA Agent token:", parent=root)
+    
+    new_token_var = tk.StringVar()
+    
+    tk.Label(root, text="Kết nối thất bại 5 lần (Token có thể đã hết hạn).\nVui lòng nhập token mới từ website:").pack(pady=10)
+    entry = tk.Entry(root, textvariable=new_token_var, width=50)
+    entry.pack(pady=5)
+    
+    def on_save():
+        root.quit()
+        
+    def on_close():
+        new_token_var.set("")
+        root.quit()
+    
+    btn_frame = tk.Frame(root)
+    btn_frame.pack(pady=10)
+    
+    tk.Button(btn_frame, text="Lưu", command=on_save, bg="#4CAF50", fg="white", width=10).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Hủy", command=on_close, width=10).pack(side=tk.LEFT)
+    
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.mainloop()
+    
+    val = new_token_var.get().strip()
     root.destroy()
-    return new_token
+    return val if val else None
 
 def update_globals(new_token):
     global TOKEN, WS_URL
@@ -175,7 +205,14 @@ def update_globals(new_token):
     TOKEN = new_token
     # In template mode the host might be hardcoded
     WS_URL = f"ws://localhost:8000/api/v1/ws/agent/{USER_ID}?token={TOKEN}"
-    logging.info("Token updated successfully.")
+    logging.info("Token updated successfully. Restarting application...")
+    
+    import sys
+    if getattr(sys, 'frozen', False):
+        subprocess.Popen([sys.executable] + sys.argv[1:])
+    else:
+        subprocess.Popen([sys.executable] + sys.argv)
+    os._exit(0)
 
 async def agent_loop() -> None:
     retry_count = 0

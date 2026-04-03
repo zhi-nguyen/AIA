@@ -179,18 +179,21 @@ Lưu ý:
 """
 
 # === AI Secretary — Meeting Intent Classifier (Phase 3) ===
-MEETING_INTENT_PROMPT = """Bạn là AI Thư Ký phân tích email. Thời điểm hiện tại: {current_time}.
+MEETING_INTENT_PROMPT = """Bạn là AI Thư Ký phân tích email. 
+Thời điểm email được gửi (Email Date): {email_date}
+Thời điểm hệ thống xử lý hiện tại: {current_time}
 
 Phân tích email dưới đây và trả về ĐÚNG cấu trúc JSON sau (KHÔNG thêm bất kỳ text nào khác):
 
 {{
+  "reasoning": "<BẮT BUỘC: Lập luận từng bước để xác định thời gian đề xuất. Ví dụ: '1. Email gửi lúc 20:45 ngày X. 2. Lát 10h tối nghĩa là 22:00 cùng ngày. 3. Kết luận: ISO 8601 là...'>",
   "is_invitation": <true nếu email có khả năng là lời mời hẹn/họp/gặp, false nếu không>,
   "intent": "<mô tả ngắn gọn ý định chính của email trong 1 câu, tiếng Việt>",
   "confidence": <số thực 0.0–1.0, mức độ tự tin rằng đây là lời mời hẹn>,
   "suggested_actions": [
     {{
       "action_type": "<'create_event' | 'reply_email' | 'ignore'>",
-      "label": "<mô tả hành động ngắn gọn cho UI, vd: 'Thêm vào lịch lúc 14:00 thứ Hai'>",
+      "label": "<mô tả hành động ngắn gọn cho UI, vd: 'Thêm vào lịch lúc 22:00 hôm nay'>",
       "payload": {{
         "title": "<tiêu đề cuộc hẹn đề xuất hoặc null>",
         "participants": ["<email hoặc tên người tham gia>"],
@@ -205,8 +208,12 @@ Phân tích email dưới đây và trả về ĐÚNG cấu trúc JSON sau (KHÔ
 
 Quy tắc bắt buộc:
 - Nếu email KHÔNG liên quan đến hẹn/họp/gặp → is_invitation=false, confidence<0.3, suggested_actions=[{{"action_type":"ignore","label":"Bỏ qua","payload":{{}}}}]
-- Thời gian phải được tính từ mốc hiện tại: {current_time}. "Chiều nay" = cùng ngày 14:00, "Mai" = ngày hôm sau, "Thứ Hai" = thứ Hai gần nhất sắp đến.
-- proposed_time PHẢI là định dạng ISO 8601 đầy đủ (ví dụ: "2026-03-29T14:00:00+07:00") hoặc null.
+- proposed_time PHẢI là định dạng ISO 8601 đầy đủ (ví dụ: "2026-03-29T22:00:00+07:00")
+- RẤT QUAN TRỌNG: Phải viết lập luận vào trường `reasoning` trước khi tính ra proposed_time. Thời gian phải được tính toán LOGIC dựa trên mốc "Thời điểm email được gửi" ({email_date}). 
+  + Các từ như "Lát", "Tí nữa", "Lát nữa", "Tối nay" ám chỉ thời gian cực kỳ gần trong cùng ngày gửi. 
+  + Ví dụ: Nếu email gửi lúc 20:45 (8:45 PM), nội dung viết "Lát 10h" hoặc "10h tối" thì LẬP LUẬN phải tính ra là 22:00 CÙNG NGÀY hôm đó, tuyệt đối KHÔNG ĐƯỢC nhầm thành 10:00 sáng hôm sau. 
+  + "Ngày mai", "Sáng mai" mới là ngày hôm sau so với {email_date}.
+  + Chú ý AM/PM: 10h tối = 22:00. 2h chiều = 14:00.
 - TUYỆT ĐỐI không trả về markdown, chú thích, hay text ngoài JSON.
 
 --- EMAIL ---

@@ -145,13 +145,14 @@ def process_user_emails(self, user_id: str):
     loop.run_until_complete(_run())
 
 
-# ── Weather Fetch task (Celery Beat — every 1 hour) ────────────────────────
+# ── Weather Fetch task (Celery Beat — every 1 hour) + OBSERVER ─────────────
 
 @celery_app.task(bind=True, name="tasks.fetch_weather_for_events")
 def fetch_weather_for_events(self):
     """
-    Lấy dữ liệu thời tiết cho tất cả tỉnh/thành phố có user có lịch hẹn
-    weather_dependent=true. Gộp cùng tỉnh/thành phố → call API 1 lần.
+    1) Lấy dữ liệu thời tiết cho tất cả tỉnh/thành phố có lịch hẹn weather_dependent.
+    2) OBSERVER: Sau khi cào xong, quét 24h forecast tìm khung giờ xấu.
+       Chỉ khi phát hiện thời tiết xấu → query DB tìm events bị ảnh hưởng → batch alert.
     """
     import asyncio
     import traceback
@@ -159,7 +160,15 @@ def fetch_weather_for_events(self):
     import json
 
     async def _run():
-        from services.db_service import get_weather_dependent_locations, save_weather_data
+        from services.db_service import (
+            get_weather_dependent_locations, save_weather_data,
+            get_events_in_bad_weather_window, mark_event_weather_alerted,
+        )
+        from services.weather_alerter import (
+            scan_24h_for_bad_windows, find_matching_bad_window,
+            push_weather_alert,
+        )
+        from services.db_service import create_pending_proposal
         from config import get_settings
 
         settings = get_settings()
@@ -198,9 +207,184 @@ def fetch_weather_for_events(self):
                 print(f"[WeatherTask] ✓ {province} ({lat},{lon}) — "
                       f"temp={data.get('current', {}).get('temp_c', '?')}°C")
 
+                # ═══ OBSERVER PHASE ═══
+                bad_windows = scan_24h_for_bad_windows(data)
+
+                if not bad_windows:
+                    print(f"[WeatherObserver] {province}: 24h OK — skip DB query")
+                    continue
+
+                print(f"[WeatherObserver] {province}: {len(bad_windows)} bad hour(s) detected!")
+                bad_hours = [w["hour"] for w in bad_windows]
+
+                # Chỉ khi có khung giờ xấu → query events bị ảnh hưởng
+                affected_events = await get_events_in_bad_weather_window(
+                    bad_hours=bad_hours,
+                    province=province,
+                )
+
+                if not affected_events:
+                    print(f"[WeatherObserver] {province}: No events in bad windows")
+                    continue
+
+                print(f"[WeatherObserver] {province}: {len(affected_events)} event(s) affected!")
+
+                # Batch dispatch alerts
+                for event in affected_events:
+                    matching_window = find_matching_bad_window(bad_windows, event.get("proposed_time"))
+                    if not matching_window:
+                        continue
+
+                    weather_info = {
+                        "reason": matching_window["reason"],
+                        "details": matching_window["details"],
+                    }
+
+                    # Tạo proposal trong DB
+                    from services.weather_alerter import build_weather_alert_payload
+                    proposal_payload = build_weather_alert_payload(event, weather_info, "")
+                    proposal_id = await create_pending_proposal(
+                        user_id=event["user_id"],
+                        gmail_id=None,
+                        payload=proposal_payload.get("data", {}),
+                    )
+
+                    # Push alert qua WebSocket
+                    await push_weather_alert(
+                        user_id=event["user_id"],
+                        event=event,
+                        weather_info=weather_info,
+                        proposal_id=proposal_id,
+                    )
+
+                    # Đánh dấu đã cảnh báo
+                    await mark_event_weather_alerted(str(event["id"]))
+                    print(f"[WeatherObserver] ✓ Alert sent for event={str(event['id'])[:8]}")
+
             except Exception as e:
                 print(f"[WeatherTask] ✗ {province}: {e}")
                 traceback.print_exc()
 
     loop = get_or_create_eventloop()
     loop.run_until_complete(_run())
+
+
+# ── ETA Task: Check weather 1h before a specific event ─────────────────────
+
+@celery_app.task(bind=True, name="tasks.check_weather_before_event")
+def check_weather_before_event(self, event_id: str, user_id: str):
+    """
+    Chạy đúng 1h trước event (scheduled via ETA).
+    Kiểm tra thời tiết tại location của user → nếu xấu → push alert.
+    """
+    import asyncio
+    import traceback
+    import requests
+    import json
+
+    async def _run():
+        from services.db_service import (
+            get_event_by_id, get_user_address,
+            get_weather_data_for_location, save_weather_data,
+            create_pending_proposal, mark_event_weather_alerted,
+        )
+        from services.weather_alerter import (
+            analyze_hour_weather, push_weather_alert,
+            build_weather_alert_payload,
+        )
+        from config import get_settings
+        from datetime import datetime, timezone, timedelta
+
+        # 1. Lấy event — verify vẫn active
+        event = await get_event_by_id(event_id)
+        if not event:
+            print(f"[WeatherETA] Event {event_id[:8]} not found — skip")
+            return
+        if event.get("status") not in ("pending", "confirmed"):
+            print(f"[WeatherETA] Event {event_id[:8]} status={event.get('status')} — skip")
+            return
+        if event.get("weather_alerted"):
+            print(f"[WeatherETA] Event {event_id[:8]} already alerted — skip")
+            return
+
+        # 2. Lấy user address
+        addr = await get_user_address(user_id)
+        if not addr or not addr.get("address_province"):
+            print(f"[WeatherETA] User {user_id[:8]} has no address — skip")
+            return
+
+        province = addr["address_province"]
+        lat = addr["address_lat"]
+        lon = addr["address_lon"]
+
+        # 3. Lấy weather_data từ DB (nếu không có → call API → save)
+        weather_data = await get_weather_data_for_location(province)
+
+        if not weather_data:
+            print(f"[WeatherETA] No cached weather for {province} — fetching...")
+            settings = get_settings()
+            try:
+                url = (
+                    f"http://api.weatherapi.com/v1/forecast.json"
+                    f"?key={settings.weather_api_key}"
+                    f"&q={lat},{lon}"
+                    f"&days=1&aqi=no&alerts=yes"
+                )
+                resp = requests.get(url, timeout=15)
+                resp.raise_for_status()
+                weather_data = resp.json()
+                await save_weather_data(province, lat, lon, weather_data)
+            except Exception as e:
+                print(f"[WeatherETA] ✗ API error for {province}: {e}")
+                return
+
+        # 4. Tìm hourly forecast cho giờ của event
+        vn_tz = timezone(timedelta(hours=7))
+        proposed_time = event.get("proposed_time")
+        if proposed_time and proposed_time.tzinfo is None:
+            proposed_time = proposed_time.replace(tzinfo=vn_tz)
+
+        event_hour_str = proposed_time.astimezone(vn_tz).strftime("%Y-%m-%d %H:00") if proposed_time else None
+
+        hourly_match = None
+        for day in weather_data.get("forecast", {}).get("forecastday", []):
+            for hour_entry in day.get("hour", []):
+                if hour_entry.get("time") == event_hour_str:
+                    hourly_match = hour_entry
+                    break
+
+        if not hourly_match:
+            print(f"[WeatherETA] No hourly data for {event_hour_str} — skip")
+            return
+
+        # 5. Phân tích thời tiết
+        result = analyze_hour_weather(hourly_match)
+
+        if not result["is_bad"]:
+            print(f"[WeatherETA] Event {event_id[:8]}: Weather OK at {event_hour_str}")
+            return
+
+        print(f"[WeatherETA] ⚠ Event {event_id[:8]}: BAD WEATHER — {result['reason']}")
+
+        # 6. Tạo proposal + push alert
+        weather_info = {"reason": result["reason"], "details": result["details"]}
+
+        event_dict = dict(event)
+        event_dict["user_id"] = user_id
+
+        proposal_payload = build_weather_alert_payload(event_dict, weather_info, "")
+        proposal_id = await create_pending_proposal(
+            user_id=user_id,
+            gmail_id=None,
+            payload=proposal_payload.get("data", {}),
+        )
+
+        await push_weather_alert(user_id, event_dict, weather_info, proposal_id)
+        await mark_event_weather_alerted(event_id, self.request.id)
+
+    loop = get_or_create_eventloop()
+    try:
+        loop.run_until_complete(_run())
+    except Exception:
+        traceback.print_exc()
+

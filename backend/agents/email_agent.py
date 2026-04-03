@@ -137,6 +137,7 @@ async def process_email_intent(user_id: str, email_data: dict) -> dict | None:
     current_time = datetime.now(vn_tz).strftime("%Y-%m-%dT%H:%M:%S+07:00")
 
     prompt = MEETING_INTENT_PROMPT.format(
+        email_date=email_data.get("date", "Không rõ"),
         current_time=current_time,
         sender=email_data.get("from", ""),
         subject=email_data.get("subject", ""),

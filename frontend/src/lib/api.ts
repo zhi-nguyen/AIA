@@ -348,6 +348,7 @@ export async function executeProposal(payload: {
   participants?: string[];
   note?: string;
   weather_dependent?: boolean;
+  cancel_event_id?: string;
 }): Promise<{ status: string; message_id?: string; event_id?: string }> {
   const res = await fetchWithAuth(`${API_BASE_URL}/execute-proposal`, {
     method: "POST",
@@ -408,6 +409,52 @@ export async function getWeather(): Promise<any> {
   const res = await fetchWithAuth(`${API_BASE_URL}/weather`);
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Failed to fetch weather" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Cập nhật sự kiện (đổi thời gian, note, participants...)
+ */
+export async function updateEvent(eventId: string, data: any): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/events/${eventId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to update event" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Huỷ sự kiện (xoá khỏi db thư ký) và gửi thông báo nếu có reply_body
+ */
+export async function cancelEvent(eventId: string, reply_body?: string, recipients?: string[]): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/events/${eventId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reply_body, recipients }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to cancel event" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Đánh dấu sự kiện đã hoàn thành
+ */
+export async function completeEvent(eventId: string): Promise<any> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/events/${eventId}/complete`, {
+    method: "PATCH",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to complete event" }));
     throw new Error(error.detail || `HTTP ${res.status}`);
   }
   return res.json();

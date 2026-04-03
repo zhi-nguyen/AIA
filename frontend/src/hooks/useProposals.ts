@@ -10,7 +10,7 @@ import { useState, useCallback, useEffect } from "react";
 import { executeProposal, getProposals, deleteProposal } from "@/lib/api";
 
 export type ProposalStatus = "pending" | "sending" | "sent" | "error";
-export type ActionType = "create_event" | "reply_email" | "ignore";
+export type ActionType = "create_event" | "reply_email" | "ignore" | "cancel_event";
 
 /** Payload cho một suggested action từ AI Secretary */
 export interface SuggestedAction {
@@ -23,13 +23,17 @@ export interface SuggestedAction {
     reply_body?: string | null;
     note?: string | null;
     weather_dependent?: boolean;
+    // Weather cancel fields
+    subject?: string;
+    body?: string;
+    recipients?: string[];
   };
 }
 
 /** Proposal chuẩn cho mọi loại card */
 export interface Proposal {
   id: string;
-  source: "email_secretary" | "news_agent";
+  source: "email_secretary" | "news_agent" | "weather_system";
   // Email secretary fields
   gmail_id?: string;
   email_subject?: string;
@@ -46,6 +50,11 @@ export interface Proposal {
     body: string;
     recipients: string[];
   };
+  // Weather system fields
+  event_id?: string;
+  event_title?: string;
+  weather_reason?: string;
+  weather_details?: string;
   // UX state
   status: ProposalStatus;
   activeActionIndex: number; // index trong suggested_actions đang được thực thi
@@ -55,6 +64,15 @@ export interface Proposal {
 
 /** Mapping action sang execute-proposal payload */
 function buildExecutePayload(action: SuggestedAction, proposal: Proposal) {
+  if (action.action_type === "cancel_event") {
+    // Weather cancel: gửi email + huỷ event
+    return {
+      subject: action.payload.subject || `[Thông báo] Hoãn lịch hẹn: ${proposal.event_title || ""}`,
+      body: action.payload.body || "",
+      recipients: action.payload.recipients ?? [],
+      cancel_event_id: proposal.event_id,
+    };
+  }
   if (action.action_type === "create_event" || action.action_type === "reply_email") {
     return {
       subject: action.payload.title || proposal.email_subject || "",
@@ -84,15 +102,24 @@ export function useProposals() {
         if (data?.proposals) {
           const initialProposals = data.proposals.map((item: any) => {
             const d = item.payload;
+            const isWeather = !!d.weather_reason;
+            const source = isWeather ? "weather_system" : "email_secretary";
+            
             return {
               id: item.id, // Use DB id
-              source: "email_secretary",
+              source: source,
+              // Email secretary fields
               gmail_id: d.gmail_id,
               email_subject: d.email_subject,
               email_from: d.email_from,
               is_invitation: d.is_invitation,
               confidence: d.confidence,
               intent: d.intent,
+              // Weather system fields
+              event_id: d.event_id,
+              event_title: d.event_title,
+              weather_reason: d.weather_reason,
+              weather_details: d.weather_details,
               suggested_actions: d.suggested_actions ?? [],
               status: "pending",
               activeActionIndex: 0,
@@ -110,7 +137,22 @@ export function useProposals() {
       const { detail } = e as CustomEvent;
       let newProposal: Proposal;
 
-      if (detail.type === "NEW_PROPOSAL" && detail.source === "email_secretary") {
+      if (detail.type === "WEATHER_ALERT" && detail.source === "weather_system") {
+        // Weather system alert
+        const d = detail.data;
+        newProposal = {
+          id: d.db_id || `prop_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          source: "weather_system",
+          event_id: d.event_id,
+          event_title: d.event_title,
+          weather_reason: d.weather_reason,
+          weather_details: d.weather_details,
+          suggested_actions: d.suggested_actions ?? [],
+          status: "pending",
+          activeActionIndex: 0,
+          timestamp: Date.now(),
+        };
+      } else if (detail.type === "NEW_PROPOSAL" && detail.source === "email_secretary") {
         // Phase 3: AI Secretary format
         const d = detail.data;
         newProposal = {
@@ -183,7 +225,7 @@ export function useProposals() {
       try {
         let execPayload: Parameters<typeof executeProposal>[0];
 
-        if (proposal.source === "email_secretary" && proposal.suggested_actions?.length) {
+        if ((proposal.source === "email_secretary" || proposal.source === "weather_system") && proposal.suggested_actions?.length) {
           const action = proposal.suggested_actions[actionIndex];
           if (action.action_type === "ignore") {
             // "Bỏ qua" — just dismiss
@@ -211,10 +253,7 @@ export function useProposals() {
           prev.map((p) => (p.id === id ? { ...p, status: "sent" } : p))
         );
 
-        const actionType = proposal.suggested_actions?.[actionIndex]?.action_type;
-        if (actionType !== "create_event") {
-          setTimeout(() => dismissProposal(id), 3000);
-        }
+        setTimeout(() => dismissProposal(id), 3000);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Lỗi giao tác";
         setProposals((prev) =>

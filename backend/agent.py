@@ -251,12 +251,42 @@ async def execute_action(data: dict) -> dict:
 
 def prompt_for_new_token():
     root = tk.Tk()
-    root.withdraw()
+    root.title("AIA Agent - Cập nhật Token")
+    
+    window_width = 400
+    window_height = 150
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = int((screen_width / 2) - (window_width / 2))
+    y = int((screen_height / 2) - (window_height / 2))
+    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
     root.attributes('-topmost', True)
-    messagebox.showwarning("Connection Failed", "Connection failed 5 times. The token may have expired or was modified. Please generate a new token from the web interface and enter it here.", parent=root)
-    new_token = simpledialog.askstring("Input", "Enter new AIA Agent token:", parent=root)
+    
+    new_token_var = tk.StringVar()
+    
+    tk.Label(root, text="Kết nối thất bại 5 lần (Token có thể đã hết hạn).\nVui lòng nhập token mới từ website:").pack(pady=10)
+    entry = tk.Entry(root, textvariable=new_token_var, width=50)
+    entry.pack(pady=5)
+    
+    def on_save():
+        root.quit()
+        
+    def on_close():
+        new_token_var.set("")
+        root.quit()
+    
+    btn_frame = tk.Frame(root)
+    btn_frame.pack(pady=10)
+    
+    tk.Button(btn_frame, text="Lưu", command=on_save, bg="#4CAF50", fg="white", width=10).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Hủy", command=on_close, width=10).pack(side=tk.LEFT)
+    
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.mainloop()
+    
+    val = new_token_var.get().strip()
     root.destroy()
-    return new_token
+    return val if val else None
 
 def update_config(new_token):
     global TOKEN, WS_URL
@@ -272,9 +302,17 @@ def update_config(new_token):
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
         WS_URL = f"{SERVER_URL}/{USER_ID}?token={TOKEN}"
-        logging.info("Token updated successfully.")
+        logging.info("Token updated successfully. Restarting application...")
+        
+        args = [arg for arg in sys.argv[1:] if arg != '--prompt-token']
+        # Restart the process
+        if getattr(sys, 'frozen', False):
+            subprocess.Popen([sys.executable] + args)
+        else:
+            subprocess.Popen([sys.executable, sys.argv[0]] + args)
+        os._exit(0)
     except Exception as e:
-        logging.error(f"Failed to update config.json: {e}")
+        logging.error(f"Failed to update config.json or restart: {e}")
 
 async def agent_loop() -> None:
     retry_count = 0
@@ -312,10 +350,12 @@ async def agent_loop() -> None:
             
         retry_count += 1
         if retry_count >= 5:
-            new_token = prompt_for_new_token()
-            if new_token:
-                update_config(new_token)
-            retry_count = 0
+            logging.info("Connection failed 5 times. Launching token prompt...")
+            if getattr(sys, 'frozen', False):
+                subprocess.Popen([sys.executable, '--prompt-token'])
+            else:
+                subprocess.Popen([sys.executable, sys.argv[0], '--prompt-token'])
+            os._exit(0)
 
         logging.info("Retrying in 5 seconds...")
         await asyncio.sleep(5)
@@ -346,6 +386,12 @@ def setup_tray():
     icon.run()
 
 if __name__ == "__main__":
+    if '--prompt-token' in sys.argv:
+        new_token = prompt_for_new_token()
+        if new_token:
+            update_config(new_token)
+        sys.exit(0)
+
     # Offload the AI Agent event loop to a background thread.
     # daemon=True ensures the background thread exits when the main thread (Tray) terminates.
     agent_thread = threading.Thread(target=lambda: asyncio.run(agent_loop()), daemon=True)
@@ -353,3 +399,4 @@ if __name__ == "__main__":
 
     # Launch the System Tray on the Main Thread
     setup_tray()
+
