@@ -7,7 +7,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Clock, Send, X, AlertCircle, Calendar, Mail, Ban, ExternalLink } from "lucide-react";
+import { CheckCircle2, Clock, Send, X, AlertCircle, Calendar, Mail, Ban, ExternalLink, CloudRain } from "lucide-react";
 import type { Proposal, SuggestedAction } from "@/hooks/useProposals";
 
 interface ProposalCardProps {
@@ -19,9 +19,10 @@ interface ProposalCardProps {
 /** Map action_type → icon */
 function ActionIcon({ type }: { type: SuggestedAction["action_type"] }) {
   switch (type) {
-    case "create_event": return <Calendar size={15} />;
-    case "reply_email":  return <Mail size={15} />;
-    default:             return <Ban size={15} />;
+    case "create_event":  return <Calendar size={15} />;
+    case "reply_email":   return <Mail size={15} />;
+    case "cancel_event":  return <CloudRain size={15} />;
+    default:              return <Ban size={15} />;
   }
 }
 
@@ -42,15 +43,24 @@ function ConfidenceBadge({ confidence }: { confidence?: number }) {
 export default function ProposalCard({ proposal, onApprove, onDismiss }: ProposalCardProps) {
   const { id, source, status, error, timestamp } = proposal;
   const isEmailSecretary = source === "email_secretary";
+  const isWeatherSystem = source === "weather_system";
 
   /* ── Header labels ── */
-  const badge = isEmailSecretary ? "📅 Thư ký AI — Hẹn gặp" : "💡 Đề xuất tự động";
+  const badge = isWeatherSystem
+    ? "⛈️ Cảnh báo thời tiết"
+    : isEmailSecretary
+    ? "📅 Thư ký AI — Hẹn gặp"
+    : "💡 Đề xuất tự động";
 
   /* ── Title & subtitle ── */
-  const title = isEmailSecretary
+  const title = isWeatherSystem
+    ? (proposal.event_title || "Cảnh báo thời tiết cho lịch hẹn")
+    : isEmailSecretary
     ? (proposal.email_subject || "Email không có tiêu đề")
     : (proposal.title || "Đề xuất mới từ AIA");
-  const subtitle = isEmailSecretary
+  const subtitle = isWeatherSystem
+    ? (proposal.weather_reason || "")
+    : isEmailSecretary
     ? (proposal.intent || "")
     : (proposal.summary || "");
 
@@ -58,7 +68,7 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
   const fromLine = isEmailSecretary ? proposal.email_from : null;
 
   /* ── Actions ── */
-  const actions = isEmailSecretary
+  const actions = (isEmailSecretary || isWeatherSystem)
     ? (proposal.suggested_actions ?? [])
     : [{
         action_type: "reply_email" as const,
@@ -80,6 +90,16 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
       return;
     }
     setEditingIndex(idx);
+
+    if (action.action_type === "cancel_event") {
+      // Weather cancel: use pre-filled email from payload
+      setEditBody(action.payload?.body || "");
+      setEditParticipants(action.payload?.recipients || []);
+      setEditNote("");
+      setEditWeatherDependent(false);
+      return;
+    }
+
     const lbl = action.label.toLowerCase();
     
     // Determine user's requested prefixes based on label context
@@ -94,7 +114,47 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
     setEditBody(llmBody ? `${prefix}${llmBody}` : prefix);
     
     // Dùng participants từ action (đã chuẩn hoá ở trên thành 'participants')
-    setEditParticipants(action.payload?.participants || []);
+    const baseParts = action.payload?.participants || [];
+    let editParts = [...baseParts];
+    if (proposal.email_from && !editParts.includes(proposal.email_from)) {
+      editParts.push(proposal.email_from);
+    }
+    
+    // Deduplication thông minh: Lấy ra phần ruột email (vd: abc@gmail.com) để phân biệt
+    const seenEmails = new Set<string>();
+    const uniqueParts: string[] = [];
+    
+    const extractCoreEmail = (str: string) => {
+      const match = str.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/i);
+      return match ? match[1].toLowerCase() : str.toLowerCase();
+    };
+
+    // Ưu tiên chuỗi dài hơn (vì "Name <email@...>" chứa nhiều thông tin hơn "email@..." hoặc "Name")
+    // Vậy ta sort str theo độ dài giảm dần trước khi filter
+    editParts.sort((a, b) => b.length - a.length);
+
+    for (const p of editParts) {
+      const core = extractCoreEmail(p);
+      // Giữ lại nếu là email duy nhất, hoặc không phải email (chỉ là tên ngẫu nhiên không có @)
+      if (!seenEmails.has(core)) {
+        uniqueParts.push(p);
+        // Nếu chuỗi chứa @, đánh dấu core vào seenEmails để loại trừ các chuỗi khác trùng ruột
+        if (core.includes("@")) {
+          seenEmails.add(core);
+          // Thử đánh dấu cả tên gốc vừa tìm để loại Name ra (Vd: Name <email@...>)
+          const nameMatch = p.match(/^"?[^"]+"?\s+</) || p.match(/^[^<]+\s+</);
+          if (nameMatch) {
+            const potentialName = nameMatch[0].replace(/[<"\s]+/g, '').trim().toLowerCase();
+            if (potentialName) seenEmails.add(potentialName);
+          }
+        } else {
+          // Trường hợp không có @, nếu core (chính là tên) chưa có trong seenEmails thì giữ
+          seenEmails.add(core); 
+        }
+      }
+    }
+    
+    setEditParticipants(uniqueParts);
     setEditNote(action.payload?.note || "");
     setEditWeatherDependent(action.payload?.weather_dependent || false);
   };
@@ -132,8 +192,27 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
       )}
       {subtitle && <p className="proposal-card__summary">{subtitle}</p>}
 
+      {/* Weather details */}
+      {isWeatherSystem && proposal.weather_details && (
+        <div style={{
+          padding: "10px 12px",
+          background: "rgba(245, 158, 11, 0.08)",
+          borderRadius: "8px",
+          border: "1px solid rgba(245, 158, 11, 0.25)",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "8px",
+          marginTop: "4px",
+        }}>
+          <CloudRain size={16} style={{ color: "#f59e0b", marginTop: "1px", flexShrink: 0 }} />
+          <span style={{ fontSize: "12px", color: "#fcd34d", lineHeight: 1.5 }}>
+            {proposal.weather_details}
+          </span>
+        </div>
+      )}
+
       {/* Preview (legacy news agent body or email snippet) */}
-      {!isEmailSecretary && proposal.payload?.body && (
+      {!isEmailSecretary && !isWeatherSystem && proposal.payload?.body && (
         <div className="proposal-card__body-preview">
           {proposal.payload.body.substring(0, 160)}
           {proposal.payload.body.length > 160 ? "…" : ""}
@@ -145,7 +224,11 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
         <div style={{ marginTop: "12px", padding: "12px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid #444" }}>
           
           <h4 style={{ fontSize: "14px", margin: "0 0 10px 0", color: "#e2e8f0" }}>
-            {actions[editingIndex]?.action_type === "create_event" ? "Xác nhận Lịch & Tùy chỉnh Email" : "Chỉnh sửa phản hồi trước khi gửi"}
+            {actions[editingIndex]?.action_type === "cancel_event"
+              ? "⛈️ Huỷ lịch hẹn & gửi email thông báo"
+              : actions[editingIndex]?.action_type === "create_event"
+              ? "Xác nhận Lịch & Tùy chỉnh Email"
+              : "Chỉnh sửa phản hồi trước khi gửi"}
           </h4>
 
           {actions[editingIndex]?.action_type === "create_event" && (
@@ -243,8 +326,28 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
             <button onClick={() => setEditingIndex(null)} style={{ padding: "6px 14px", background: "transparent", border: "1px solid #555", color: "#cbd5e1", borderRadius: "6px", cursor: "pointer", fontSize: "13px" }}>
               Hủy
             </button>
-            <button onClick={handleSendModified} style={{ padding: "6px 14px", background: "#2563eb", border: "none", color: "white", borderRadius: "6px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 500 }}>
-              <Send size={14} /> {actions[editingIndex]?.action_type === "create_event" ? "Gửi Mail & Đồng bộ DB" : "Gửi ngay"}
+            <button
+              onClick={handleSendModified}
+              style={{
+                padding: "6px 14px",
+                background: actions[editingIndex]?.action_type === "cancel_event" ? "#dc2626" : "#2563eb",
+                border: "none",
+                color: "white",
+                borderRadius: "6px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "13px",
+                fontWeight: 500,
+              }}
+            >
+              <Send size={14} />
+              {actions[editingIndex]?.action_type === "cancel_event"
+                ? "Huỷ lịch & Gửi thông báo"
+                : actions[editingIndex]?.action_type === "create_event"
+                ? "Gửi Mail & Đồng bộ DB"
+                : "Gửi ngay"}
             </button>
           </div>
         </div>

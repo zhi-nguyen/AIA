@@ -5,13 +5,14 @@ routes.py - REST API Endpoints
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Response, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from agents.graph import get_compiled_graph
 from memory.user_context import initialize_user_profile, get_user_profile
 from langchain_core.messages import HumanMessage
 import traceback
 import io
+from datetime import datetime
 
 router = APIRouter()
 
@@ -570,6 +571,15 @@ class ExecuteProposalRequest(BaseModel):
     participants: Optional[list[str]] = None  # sẽ ghi vào pending_events.participants
     note: Optional[str] = None
     weather_dependent: Optional[bool] = False
+    # Weather cancel fields
+    cancel_event_id: Optional[str] = None   # Nếu có → update event status = 'cancelled' + revoke ETA task
+
+    @field_validator('recipients', 'participants', mode='before')
+    @classmethod
+    def convert_string_to_list(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 @router.post("/execute-proposal")
@@ -581,40 +591,102 @@ async def execute_proposal(
     """
     Thực thi proposal:
     1. Gửi email ngay lập tức qua Gmail API
-    2. Nếu có proposed_time → BackgroundTask: lưu vào pending_events table (status='confirmed')
+    2. Nếu có proposed_time → lưu vào pending_events + schedule ETA weather check
+    3. Nếu có cancel_event_id → huỷ event + revoke ETA task
     """
     from tools.email_tools import send_email
 
-    if not request.recipients:
-        raise HTTPException(status_code=400, detail="Danh sách người nhận trống")
+    valid_recipients = [str(r).strip() for r in request.recipients if "@" in str(r)]
 
-    # ── 1. Gửi email (blocking, cần biết kết quả ngay) ──────────────────────
-    result = await send_email(
-        user_id=user_id,
-        subject=request.subject,
-        body=request.body,
-        recipients=request.recipients,
-    )
+    # ── 1. Gửi email (nếu có nội dung) ──────────────────────
+    if request.body and request.body.strip():
+        if not valid_recipients:
+            raise HTTPException(status_code=400, detail="Không có địa chỉ email hợp lệ để gửi (yêu cầu chứa ký tự @)")
 
-    if not result.get("success"):
-        raise HTTPException(status_code=500, detail=result.get("error", "Lỗi gửi email"))
+        result = await send_email(
+            user_id=user_id,
+            subject=request.subject,
+            body=request.body,
+            recipients=valid_recipients,
+        )
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Lỗi gửi email"))
 
     new_event_id: Optional[str] = None
 
-    # ── 2. BackgroundTask: lưu lịch hẹn vào pending_events ─────────────────
-    if request.proposed_time:
+    # ── 2. Nếu cancel_event_id → huỷ event + revoke Celery ETA ──────────────
+    if request.cancel_event_id:
+        async def _cancel_event():
+            from services.db_service import update_event_status, get_event_by_id
+            # Lấy event để tìm task_id cần revoke
+            event = await get_event_by_id(request.cancel_event_id)
+            if event and event.get("weather_task_id"):
+                try:
+                    from celery_app import celery_app as _celery
+                    _celery.control.revoke(event["weather_task_id"], terminate=False)
+                    print(f"[ExecuteProposal] Revoked weather task {event['weather_task_id']}")
+                except Exception as rev_err:
+                    print(f"[ExecuteProposal] Revoke error (non-critical): {rev_err}")
+            await update_event_status(request.cancel_event_id, "cancelled")
+            print(f"[ExecuteProposal] Cancelled event {request.cancel_event_id}")
+
+        background_tasks.add_task(_cancel_event)
+
+    # ── 3. BackgroundTask: lưu lịch hẹn + schedule ETA ──────────────────────
+    elif request.proposed_time:
         async def _save_event():
-            from services.db_service import create_pending_event
+            from services.db_service import create_pending_event, save_event_weather_task_id
+            from datetime import datetime
+
+            dt_proposed = None
+            if request.proposed_time:
+                try:
+                    dt_proposed = datetime.fromisoformat(request.proposed_time)
+                except Exception:
+                    dt_proposed = None
+
             eid = await create_pending_event(
                 user_id=user_id,
                 title=request.subject,
                 participants=list(set((request.participants or []) + request.recipients)),
-                proposed_time=request.proposed_time,
+                proposed_time=dt_proposed,
                 status="confirmed",
                 note=request.note,
                 weather_dependent=request.weather_dependent,
             )
             print(f"[ExecuteProposal] Saved pending_event id={eid} for user={user_id}")
+
+            # Schedule ETA weather check 1h trước event
+            if request.weather_dependent and request.proposed_time:
+                try:
+                    from datetime import datetime, timedelta, timezone
+                    from tasks import check_weather_before_event
+
+                    event_time = datetime.fromisoformat(request.proposed_time)
+                    if event_time.tzinfo is None:
+                        vn_tz = timezone(timedelta(hours=7))
+                        event_time = event_time.replace(tzinfo=vn_tz)
+
+                    check_time = event_time - timedelta(hours=1)
+                    now = datetime.now(event_time.tzinfo)
+
+                    if check_time > now:
+                        task = check_weather_before_event.apply_async(
+                            args=[eid, user_id],
+                            eta=check_time,
+                        )
+                        await save_event_weather_task_id(eid, task.id)
+                        print(f"[ExecuteProposal] Scheduled weather ETA task={task.id} at {check_time.isoformat()}")
+                    else:
+                        # Event < 1h nữa → check ngay
+                        task = check_weather_before_event.apply_async(
+                            args=[eid, user_id],
+                        )
+                        await save_event_weather_task_id(eid, task.id)
+                        print(f"[ExecuteProposal] Event < 1h away — checking weather NOW, task={task.id}")
+                except Exception as schedule_err:
+                    print(f"[ExecuteProposal] ETA schedule error (non-critical): {schedule_err}")
 
         background_tasks.add_task(_save_event)
 
@@ -626,6 +698,29 @@ async def execute_proposal(
 
 
 # === Proposal & Event Endpoints ===
+
+class EditEventRequest(BaseModel):
+    title: str
+    proposed_time: Optional[str] = None
+    note: Optional[str] = None
+    participants: Optional[list[str]] = None
+    weather_dependent: bool = False
+    
+    @field_validator('participants', mode='before')
+    def split_participants(cls, v):
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
+
+class CancelEventRequest(BaseModel):
+    reply_body: Optional[str] = None
+    recipients: Optional[list[str]] = None
+    
+    @field_validator('recipients', mode='before')
+    def split_recipients(cls, v):
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
 
 @router.get("/events")
 async def get_events(user_id: str = Depends(get_current_user_id)):
@@ -639,6 +734,66 @@ async def get_events(user_id: str = Depends(get_current_user_id)):
         if isinstance(e.get("created_at"), datetime):
             e["created_at"] = e["created_at"].isoformat()
     return events
+
+@router.put("/events/{event_id}")
+async def update_event(event_id: str, request: EditEventRequest, user_id: str = Depends(get_current_user_id)):
+    from services.db_service import update_pending_event_details
+    
+    dt_proposed = None
+    if request.proposed_time:
+        try:
+            dt_proposed = datetime.fromisoformat(request.proposed_time)
+        except Exception:
+            dt_proposed = None
+
+    await update_pending_event_details(
+        event_id=event_id,
+        title=request.title,
+        participants=request.participants or [],
+        proposed_time=dt_proposed,
+        note=request.note,
+        weather_dependent=request.weather_dependent
+    )
+    return {"status": "ok"}
+
+@router.post("/events/{event_id}/cancel")
+async def cancel_event(event_id: str, request: CancelEventRequest, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user_id)):
+    from services.db_service import update_event_status, get_event_by_id, delete_pending_event
+    
+    # 1. Thu hồi task thời tiết nếu có
+    event = await get_event_by_id(event_id)
+    if event and event.get("weather_task_id"):
+        try:
+            from celery_app import celery_app as _celery
+            _celery.control.revoke(event["weather_task_id"], terminate=False)
+        except Exception as rev_err:
+            print(f"[CancelEvent] Revoke error: {rev_err}")
+
+    # 2. Xóa Event trong Db
+    await delete_pending_event(event_id)
+    
+    # 3. Handle email sending in background if requested
+    if request.reply_body and request.reply_body.strip():
+        valid_recipients = [str(r).strip() for r in (request.recipients or []) if "@" in str(r)]
+        if valid_recipients:
+            def _send_cancel_email():
+                import asyncio
+                from tools.email_tools import send_email
+                asyncio.run(send_email(
+                    user_id=user_id,
+                    recipients=valid_recipients,
+                    subject=f"Re: Huỷ lịch hẹn" if not event else f"Re: {event.get('title', 'Lịch hẹn')}",
+                    body=request.reply_body
+                ))
+            background_tasks.add_task(_send_cancel_email)
+
+    return {"status": "ok"}
+
+@router.patch("/events/{event_id}/complete")
+async def complete_event(event_id: str, user_id: str = Depends(get_current_user_id)):
+    from services.db_service import update_event_status
+    await update_event_status(event_id, "completed")
+    return {"status": "ok"}
 @router.get("/proposals")
 async def get_proposals(user_id: str = Depends(get_current_user_id)):
     """Lấy danh sách các đề xuất AI thư ký (pending proposal) của user"""

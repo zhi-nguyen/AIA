@@ -26,14 +26,20 @@ export function useChat() {
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+    let isMounted = true;
+
     const connectWS = async () => {
+      if (!isMounted) return;
       try {
         const { user_id } = await initSession();
         const wsUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1")
           .replace(/^http/, "ws") + `/ws/web/${user_id}`;
         
-        socket = new WebSocket(wsUrl);
+        const socket = new WebSocket(wsUrl);
+        socket.onopen = () => {
+          console.log("WS Connected");
+        };
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
@@ -59,19 +65,47 @@ export function useChat() {
             } else if (data.type === "new_proposal" || data.type === "NEW_PROPOSAL") {
               // Dispatch event for useProposals hook
               window.dispatchEvent(new CustomEvent("proposal_received", { detail: data }));
+            } else if (data.type === "WEATHER_ALERT") {
+              // Weather alert → reuse proposal flow
+              window.dispatchEvent(new CustomEvent("proposal_received", { detail: data }));
             }
           } catch (e) {
             console.error("WS Parse Error", e);
           }
         };
+
+        socket.onclose = () => {
+          console.log("WS Disconnected, reconnecting in 5s...");
+          if (isMounted) {
+            reconnectTimeout = setTimeout(connectWS, 5000);
+          }
+        };
+
+        socket.onerror = (err) => {
+          console.error("WS Error", err);
+          socket.close(); // Triggers onclose and reconnects
+        };
+
         ws.current = socket;
       } catch (err) {
         console.error("WS Connection Error", err);
+        if (isMounted) {
+          reconnectTimeout = setTimeout(connectWS, 5000);
+        }
       }
     };
+
     connectWS();
+
     return () => {
-      if (socket) socket.close();
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
+      if (ws.current) {
+        // Prevent reconnect loop on unmount
+        ws.current.onclose = null;
+        ws.current.onerror = null;
+        ws.current.close();
+      }
     };
   }, []);
 
