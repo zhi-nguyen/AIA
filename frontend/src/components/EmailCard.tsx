@@ -134,17 +134,16 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
     editParts.sort((a, b) => b.length - a.length);
 
     for (const p of editParts) {
-      const core = extractCoreEmail(p);
+      const core = extractCoreEmail(p).trim();
       // Giữ lại nếu là email duy nhất, hoặc không phải email (chỉ là tên ngẫu nhiên không có @)
       if (!seenEmails.has(core)) {
         uniqueParts.push(p);
         // Nếu chuỗi chứa @, đánh dấu core vào seenEmails để loại trừ các chuỗi khác trùng ruột
         if (core.includes("@")) {
           seenEmails.add(core);
-          // Thử đánh dấu cả tên gốc vừa tìm để loại Name ra (Vd: Name <email@...>)
           const nameMatch = p.match(/^"?[^"]+"?\s+</) || p.match(/^[^<]+\s+</);
           if (nameMatch) {
-            const potentialName = nameMatch[0].replace(/[<"\s]+/g, '').trim().toLowerCase();
+            const potentialName = nameMatch[0].replace(/["<]/g, '').trim().toLowerCase();
             if (potentialName) seenEmails.add(potentialName);
           }
         } else {

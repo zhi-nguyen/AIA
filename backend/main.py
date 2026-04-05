@@ -51,10 +51,14 @@ async def startup_event():
                         try:
                             data = json.loads(message["data"])
                             user_id = data.get("user_id")
+                            msg_type = data.get("type", "")
                             if user_id:
-                                # Forward message to WebSocket clients
-                                await manager.send_to_web(user_id, data)
-                                await manager.send_to_agent(user_id, data)
+                                if msg_type == "agent_command":
+                                    # Lệnh dành cho Agent cục bộ (tạo Excel, Word, ...)
+                                    await manager.send_to_agent(user_id, data)
+                                else:
+                                    # Chat response → chỉ gửi cho Web client
+                                    await manager.send_to_web(user_id, data)
                         except Exception as e:
                             print(f"[Redis Listener Parse Error] {e}")
                 except Exception as e:
