@@ -50,6 +50,7 @@ class GeminiClient:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
+        max_output_tokens: int = 4096,
     ) -> str:
         """
         Gọi Gemini 1.5 Pro cho tác vụ phức tạp.
@@ -58,7 +59,7 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=0.7,
             top_p=0.95,
-            max_output_tokens=4096,
+            max_output_tokens=max_output_tokens,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:

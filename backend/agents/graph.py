@@ -47,7 +47,7 @@ async def general_chat_node(state: AgentState) -> dict:
         chat_history=chat_history,
     )
 
-    response = client.generate_pro(last_message, system_instruction=system_prompt)
+    response = client.generate_pro(last_message, system_instruction=system_prompt, max_output_tokens=16384)
     
     # Kiểm tra xem AI có yêu cầu chạy tool cục bộ không
     extracted_json = _extract_json(response)

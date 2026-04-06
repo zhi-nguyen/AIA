@@ -47,12 +47,13 @@ def update_user_context(user_id: str, new_info: str) -> bool:
     try:
         from sqlalchemy import text
         if hasattr(store._vector_store, "_session"):
-            session = store._vector_store._session
-            session.execute(
-                text("DELETE FROM data_aia_user_memory WHERE metadata_->>'user_id' = :uid AND metadata_->>'type' = 'user_profile'"),
-                {"uid": user_id}
-            )
-            session.commit()
+            session_maker = store._vector_store._session
+            with session_maker() as session:
+                session.execute(
+                    text("DELETE FROM data_aia_user_memory WHERE metadata_->>'user_id' = :uid AND metadata_->>'type' = 'user_profile'"),
+                    {"uid": user_id}
+                )
+                session.commit()
     except Exception as e:
         print(f"[Memory] Could not clean old user profile (ignoring): {e}")
 

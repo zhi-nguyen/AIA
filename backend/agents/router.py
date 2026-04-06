@@ -43,24 +43,55 @@ def _extract_json(text: str) -> dict:
 
     # Bỏ markdown code block nếu có
     if "```" in clean:
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", clean, re.DOTALL)
+        match = re.search(r"```(?:json)?\s*\n?(.*?)(?:\n\s*```|$)", clean, re.DOTALL)
         if match:
             clean = match.group(1).strip()
+            print(f"[_extract_json] Stripped markdown. Prefix: {clean[:50]}")
 
     # Thử parse trực tiếp
     try:
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        pass
+        j = json.loads(clean)
+        print("[_extract_json] Parsed directly successfully.")
+        return j
+    except Exception as e:
+        print(f"[_extract_json] Direct parse failed: {e}")
 
-    # Tìm JSON object đầu tiên trong text
-    match = re.search(r"\{[^}]+\}", clean)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
+    # Nếu vẫn lỗi, thử regex tự parse tay để tìm object valid chứa {}
+    start = clean.find("{")
+    if start != -1:
+        brace_count = 0
+        end = -1
+        in_string = False
+        escape = False
+        
+        for i in range(start, len(clean)):
+            char = clean[i]
+            if char == '"' and not escape:
+                in_string = not in_string
+            if not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end = i
+                        break
+            if char == '\\' and not escape:
+                escape = True
+            else:
+                escape = False
+                
+        if end != -1:
+            try:
+                j = json.loads(clean[start:end+1])
+                print("[_extract_json] Manual parse successfully.")
+                return j
+            except Exception as e:
+                print(f"[_extract_json] Manual parse failed: {e}")
+        else:
+            print("[_extract_json] Manual parse failed: brace_count never reached 0")
 
+    print("[_extract_json] Extracted nothing, returning {}")
     return {}
 
 
