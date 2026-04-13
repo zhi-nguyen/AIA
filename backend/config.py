@@ -6,6 +6,13 @@ Sử dụng pydantic-settings để load biến môi trường từ .env
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 import os
+import sys
+
+def get_base_path():
+    """Lấy đường dẫn gốc của ứng dụng (hỗ trợ PyInstaller)"""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 class Settings(BaseSettings):
@@ -14,7 +21,7 @@ class Settings(BaseSettings):
     # === Vertex AI ===
     vertex_project_id: str = "xiaoyue-api"
     vertex_location: str = "us-central1"
-    vertex_credentials_path: str = os.path.join(os.path.dirname(__file__), "xiaoyue-api-key.json")
+    vertex_credentials_path: str = os.path.join(get_base_path(), "xiaoyue-api-key.json")
 
     # === Database ===
     database_url: str = "postgresql://aia_user:aia_secret_2024@localhost:5433/aia_db"
@@ -40,7 +47,7 @@ class Settings(BaseSettings):
 
     # === Vertex AI Search (Discovery Engine) ===
     vertex_search_data_store_id: str = "aia-ds_1774321984667"
-    data_store_credentials_path: str = os.path.join(os.path.dirname(__file__), "data-store-key.json")
+    data_store_credentials_path: str = os.path.join(get_base_path(), "data-store-key.json")
 
     # === Gmail Push (Pub/Sub Watch) ===
     pubsub_project_id: str = "xiaoyue-api"
@@ -55,7 +62,7 @@ class Settings(BaseSettings):
     collection_name: str = "aia_user_memory"
 
     model_config = {
-        "env_file": os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        "env_file": os.path.join(get_base_path(), ".env" if getattr(sys, 'frozen', False) else "../.env"),
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

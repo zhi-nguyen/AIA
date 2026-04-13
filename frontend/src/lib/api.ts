@@ -3,7 +3,7 @@
  * Giao tiếp với FastAPI backend
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_BASE_URL = "http://localhost:8000/api/v1";
 
 async function fetchWithAuth(url: string, options: RequestInit = {}) {
   return fetch(url, { ...options, credentials: "include" });

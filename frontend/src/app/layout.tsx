@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
+import dynamic from "next/dynamic";
 import "./globals.css";
+
+const TauriSidecarInitializer = dynamic(
+  () => import("@/components/TauriSidecarInitializer"),
+  { ssr: false } // Vô hiệu hoá server-rendering vì chức năng này chỉ chạy trên Desktop UI client-side
+);
 
 export const metadata: Metadata = {
   title: "AIA - Trợ Lý AI Cá Nhân",
@@ -19,7 +25,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <TauriSidecarInitializer />
+        {children}
+      </body>
     </html>
   );
 }

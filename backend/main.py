@@ -112,8 +112,8 @@ from google_auth_oauthlib.flow import Flow
 async def auth_callback(request: Request):
     try:
         SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "openid", "https://www.googleapis.com/auth/userinfo.email"]
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        creds_path = os.path.join(script_dir, 'credentials.json')
+        from config import get_base_path
+        creds_path = os.path.join(get_base_path(), 'credentials.json')
         
         user_id = request.query_params.get("state")
         if not user_id:
@@ -178,3 +178,20 @@ from api.websocket import router as ws_router
 
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
+
+if __name__ == "__main__":
+    import uvicorn
+    import socket
+    
+    def find_free_port(start_port=8000, max_port=8020):
+        for port in range(start_port, max_port):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(('127.0.0.1', port)) != 0:
+                    return port
+        return start_port
+        
+    port = find_free_port(8000, 8020)
+    print("===========================================================")
+    print(f"[AIA Backend] Starting Server at http://127.0.0.1:{port}")
+    print("===========================================================")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
