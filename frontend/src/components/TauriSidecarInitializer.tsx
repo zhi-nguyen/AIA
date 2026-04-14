@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { Command } from "@tauri-apps/plugin-shell";
 
 export default function TauriSidecarInitializer() {
   useEffect(() => {
@@ -10,6 +9,7 @@ export default function TauriSidecarInitializer() {
     const startSidecar = async () => {
       try {
         console.log("Đang khởi động AIA_Agent Backend...");
+        const { Command } = await import("@tauri-apps/plugin-shell");
         const command = Command.sidecar("bin/AIA_Agent");
         
         command.on("close", (data) => {
