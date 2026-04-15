@@ -111,7 +111,7 @@ from google_auth_oauthlib.flow import Flow
 @app.get("/auth/callback")
 async def auth_callback(request: Request):
     try:
-        SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+        SCOPES = ["https://www.googleapis.com/auth/gmail.modify", "openid", "https://www.googleapis.com/auth/userinfo.email"]
         from config import get_base_path
         creds_path = os.path.join(get_base_path(), 'credentials.json')
         
@@ -154,8 +154,13 @@ async def auth_callback(request: Request):
         enc_access = encrypt_token(creds.token)
         enc_refresh = encrypt_token(creds.refresh_token) if creds.refresh_token else None
         
-        from services.db_service import link_google_account
+        from services.db_service import link_google_account, add_user_account, get_user_accounts
         real_user_id = await link_google_account(user_id, google_id, email, enc_access, enc_refresh)
+        
+        # Lưu vào bảng user_accounts (multi-email)
+        existing_accounts = await get_user_accounts(real_user_id)
+        is_primary = len(existing_accounts) == 0  # Account đầu tiên là primary
+        await add_user_account(real_user_id, google_id, email, enc_access, enc_refresh, is_primary)
             
         print(f"[Auth] Đã link Google account {email} cho user {real_user_id[:8]}…")
 
@@ -169,8 +174,31 @@ async def auth_callback(request: Request):
         import traceback
         traceback.print_exc()
         print(f"[Auth Error] Lỗi khi tạo token: {e}")
-        
-    return RedirectResponse("http://localhost:3000/")
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse("""
+        <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc">
+        <div style="text-align:center"><h1 style="color:#ef4444">❌ Đăng nhập thất bại</h1><p>Vui lòng thử lại.</p></div>
+        </body></html>""", status_code=200)
+    
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(f"""
+    <html>
+    <head><title>Đăng nhập thành công</title></head>
+    <body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:linear-gradient(135deg,#f8fafc,#e0e7ff)">
+      <div style="text-align:center;background:white;padding:48px 64px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.08)">
+        <div style="font-size:64px;margin-bottom:16px">✅</div>
+        <h1 style="color:#1e1e2d;margin:0 0 8px">Đăng nhập thành công!</h1>
+        <p style="color:#6366f1;font-weight:600;font-size:18px;margin:0 0 8px">{email}</p>
+        <p style="color:#64748b;margin:0 0 24px">Tài khoản đã được liên kết. Bạn có thể đóng tab này.</p>
+        <button onclick="window.close()" style="background:#6366f1;color:white;border:none;padding:14px 32px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer">
+          Đóng tab & Quay lại ứng dụng
+        </button>
+        <p style="color:#94a3b8;font-size:12px;margin-top:16px">Tab sẽ tự đóng sau 5 giây...</p>
+      </div>
+      <script>setTimeout(()=>window.close(), 5000);</script>
+    </body>
+    </html>
+    """, status_code=200)
 
 # === Import routes (sẽ mở rộng dần) ===
 from api.routes import router as api_router

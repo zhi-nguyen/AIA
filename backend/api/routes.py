@@ -433,7 +433,7 @@ async def get_google_auth_url(user_id: str = Depends(get_current_user_id)):
     from google_auth_oauthlib.flow import Flow
     from fastapi import HTTPException
     
-    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+    SCOPES = ["https://www.googleapis.com/auth/gmail.modify", "openid", "https://www.googleapis.com/auth/userinfo.email"]
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     creds_path = os.path.join(script_dir, 'credentials.json')
     
@@ -494,6 +494,40 @@ async def graph_info():
         "flow": "START → memory_injector → router → [email|news|general] → END",
         "version": "Phase 5 - Voice (TTS & STT)",
     }
+
+
+# === Multi-Email Account Management ===
+
+@router.get("/accounts")
+async def get_linked_accounts(user_id: str = Depends(get_current_user_id)):
+    """Lấy danh sách tất cả tài khoản email đã liên kết của user."""
+    from services.db_service import get_user_accounts
+    try:
+        accounts = await get_user_accounts(user_id)
+        # Format datetime
+        for acc in accounts:
+            if isinstance(acc.get("created_at"), datetime):
+                acc["created_at"] = acc["created_at"].isoformat()
+        return {"status": "ok", "accounts": accounts}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/accounts/{account_id}")
+async def delete_linked_account(account_id: str, user_id: str = Depends(get_current_user_id)):
+    """Xoá một tài khoản email đã liên kết."""
+    from services.db_service import delete_user_account
+    try:
+        success = await delete_user_account(account_id, user_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Không thể xoá tài khoản duy nhất còn lại")
+        return {"status": "ok", "deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # === Agent Client Endpoints ===
 
@@ -853,3 +887,124 @@ async def get_weather(user_id: str = Depends(get_current_user_id)):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Mail Panel — Hộp thư đầy đủ
+# ---------------------------------------------------------------------------
+
+@router.get("/emails")
+async def get_emails(
+    request: Request,
+    account_email: str = "",
+    limit: int = 20,
+    q: str = "",
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Lấy danh sách email từ tất cả hoặc 1 account cụ thể.
+    Query params:
+      - account_email: lọc theo email cụ thể (rỗng = tất cả accounts)
+      - limit: số email tối đa mỗi account (default 20)
+      - q: Gmail search query (e.g. "is:unread", "from:someone@gmail.com")
+    """
+    from tools.email_tools import fetch_inbox_emails
+    from services.db_service import get_user_accounts
+
+    try:
+        if account_email:
+            # Fetch inbox riêng của 1 email
+            emails = await fetch_inbox_emails(
+                user_id, email_address=account_email, limit=limit, query=q
+            )
+            return {"status": "ok", "emails": emails, "total": len(emails)}
+        else:
+            # Fetch tất cả accounts
+            accounts = await get_user_accounts(user_id)
+            all_emails = []
+            for acc in accounts:
+                try:
+                    acc_emails = await fetch_inbox_emails(
+                        user_id, email_address=acc["email"], limit=limit, query=q
+                    )
+                    # Gắn account_email vào mỗi email
+                    for e in acc_emails:
+                        e["account_email"] = acc["email"]
+                    all_emails.extend(acc_emails)
+                except Exception as e:
+                    print(f"[MailPanel] Skip account {acc['email']}: {e}")
+                    continue
+
+            # Sắp xếp theo ngày mới nhất
+            all_emails.sort(key=lambda x: x.get("date", ""), reverse=True)
+            return {"status": "ok", "emails": all_emails[:limit], "total": len(all_emails)}
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/emails/{gmail_id}")
+async def get_email_detail_endpoint(
+    gmail_id: str,
+    account_email: str = "",
+    user_id: str = Depends(get_current_user_id),
+):
+    """Lấy nội dung chi tiết 1 email."""
+    from tools.email_tools import get_email_detail
+
+    detail = await get_email_detail(user_id, gmail_id, email_address=account_email or None)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return {"status": "ok", "email": detail}
+
+
+@router.patch("/emails/{gmail_id}/read")
+async def mark_email_read_endpoint(
+    gmail_id: str,
+    account_email: str = "",
+    user_id: str = Depends(get_current_user_id),
+):
+    """Đánh dấu email đã đọc."""
+    from tools.email_tools import mark_email_read
+
+    success = await mark_email_read(user_id, gmail_id, email_address=account_email or None)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to mark as read")
+    return {"status": "ok", "marked": True}
+
+
+@router.delete("/emails/{gmail_id}")
+async def trash_email_endpoint(
+    gmail_id: str,
+    account_email: str = "",
+    user_id: str = Depends(get_current_user_id),
+):
+    """Xoá email (chuyển vào thùng rác)."""
+    from tools.email_tools import trash_email
+
+    success = await trash_email(user_id, gmail_id, email_address=account_email or None)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to trash email")
+    return {"status": "ok", "trashed": True}
+
+
+class ReplyRequest(BaseModel):
+    body: str
+    account_email: str = ""
+
+@router.post("/emails/{gmail_id}/reply")
+async def reply_to_email_endpoint(
+    gmail_id: str,
+    req: ReplyRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Trả lời 1 email."""
+    from tools.email_tools import reply_to_email
+
+    result = await reply_to_email(
+        user_id, gmail_id, req.body, email_address=req.account_email or None
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Reply failed"))
+    return {"status": "ok", "message_id": result.get("message_id", "")}

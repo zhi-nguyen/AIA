@@ -459,3 +459,129 @@ export async function completeEvent(eventId: string): Promise<any> {
   }
   return res.json();
 }
+
+// === Multi-Email Account Management ===
+
+export interface LinkedAccount {
+  id: string;
+  email: string;
+  is_primary: boolean;
+  created_at: string;
+}
+
+/**
+ * Lấy danh sách tài khoản email đã liên kết
+ */
+export async function getLinkedAccounts(): Promise<{ status: string; accounts: LinkedAccount[] }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/accounts`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch accounts" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Xoá một tài khoản email đã liên kết
+ */
+export async function deleteLinkedAccount(accountId: string): Promise<{ status: string; deleted: boolean }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete account" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Kiểm tra trạng thái Gmail đã kết nối chưa
+ */
+export async function getGmailStatus(): Promise<{ configured: boolean; authorized: boolean }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/gmail/status`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// === Mail Panel API ===
+
+export interface EmailItem {
+  id: string;
+  threadId: string;
+  snippet: string;
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  is_unread: boolean;
+  is_starred: boolean;
+  account_email: string;
+}
+
+export interface EmailDetail extends EmailItem {
+  body: string;
+  label_ids: string[];
+}
+
+export async function fetchEmails(opts?: {
+  account_email?: string;
+  limit?: number;
+  q?: string;
+}): Promise<{ status: string; emails: EmailItem[]; total: number }> {
+  const params = new URLSearchParams();
+  if (opts?.account_email) params.set("account_email", opts.account_email);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.q) params.set("q", opts.q);
+  const res = await fetchWithAuth(`${API_BASE_URL}/emails?${params.toString()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEmailDetail(
+  gmailId: string,
+  accountEmail?: string
+): Promise<{ status: string; email: EmailDetail }> {
+  const params = accountEmail ? `?account_email=${encodeURIComponent(accountEmail)}` : "";
+  const res = await fetchWithAuth(`${API_BASE_URL}/emails/${gmailId}${params}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function markEmailRead(
+  gmailId: string,
+  accountEmail?: string
+): Promise<{ status: string; marked: boolean }> {
+  const params = accountEmail ? `?account_email=${encodeURIComponent(accountEmail)}` : "";
+  const res = await fetchWithAuth(`${API_BASE_URL}/emails/${gmailId}/read${params}`, {
+    method: "PATCH",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function trashEmail(
+  gmailId: string,
+  accountEmail?: string
+): Promise<{ status: string; trashed: boolean }> {
+  const params = accountEmail ? `?account_email=${encodeURIComponent(accountEmail)}` : "";
+  const res = await fetchWithAuth(`${API_BASE_URL}/emails/${gmailId}${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function replyToEmail(
+  gmailId: string,
+  body: string,
+  accountEmail?: string
+): Promise<{ status: string; message_id: string }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/emails/${gmailId}/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body, account_email: accountEmail || "" }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
