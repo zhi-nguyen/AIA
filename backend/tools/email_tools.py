@@ -33,15 +33,32 @@ CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cre
 TOKEN_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "token.json")
 
 
-async def _get_gmail_service(user_id: str):
+async def _get_gmail_service(user_id: str, email_address: str | None = None):
     """
     Khởi tạo Gmail API service với OAuth2 từ DB.
     Tự động refresh token nếu hết hạn.
+    
+    Args:
+        user_id: UUID của user
+        email_address: (optional) Nếu cung cấp, lấy credentials riêng cho email này
+                       từ bảng user_accounts thay vì credentials chung.
     """
     from services.db_service import get_google_credentials, update_google_credentials
     from services.crypto_service import decrypt_token, encrypt_token
     
-    creds_row = await get_google_credentials(user_id)
+    creds_row = None
+    
+    # Nếu có email_address → lấy credentials riêng cho email đó
+    if email_address:
+        from services.db_service import get_credentials_for_email
+        email_creds = await get_credentials_for_email(email_address)
+        if email_creds and email_creds.get("encrypted_access_token"):
+            creds_row = email_creds
+    
+    # Fallback: lấy credentials chung của user
+    if not creds_row or not creds_row.get("encrypted_access_token"):
+        creds_row = await get_google_credentials(user_id)
+    
     if not creds_row or not creds_row.get("encrypted_access_token"):
         raise ValueError("User has no Google credentials")
         
@@ -63,15 +80,25 @@ async def _get_gmail_service(user_id: str):
         token_uri=client_config.get("token_uri", "https://oauth2.googleapis.com/token"),
         client_id=client_config.get("client_id"),
         client_secret=client_config.get("client_secret"),
-        # Không truyền scopes — Dùng scope đã cấp phép lúc OAuth login ban đầu.
-        # Nếu truyền scope khác sẽ gây lỗi invalid_scope khi refresh token.
     )
 
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         new_enc_access = encrypt_token(creds.token)
         new_enc_refresh = encrypt_token(creds.refresh_token) if creds.refresh_token else creds_row["encrypted_refresh_token"]
-        await update_google_credentials(user_id, new_enc_access, new_enc_refresh)
+        # Cập nhật token mới vào DB
+        if email_address:
+            # Cập nhật cho email cụ thể trong user_accounts
+            from services.db_service import get_db_pool
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE user_accounts SET encrypted_access_token = $1, encrypted_refresh_token = $2 
+                       WHERE user_id = $3::uuid AND email = $4""",
+                    new_enc_access, new_enc_refresh, user_id, email_address
+                )
+        else:
+            await update_google_credentials(user_id, new_enc_access, new_enc_refresh)
 
     return build("gmail", "v1", credentials=creds)
 
@@ -148,7 +175,7 @@ def is_potential_meeting(subject: str, body: str) -> bool:
     return bool(_MEETING_PATTERN.search(text_to_scan))
 
 
-async def fetch_unread_emails(user_id: str, limit: int = 10) -> list[dict]:
+async def fetch_unread_emails(user_id: str, limit: int = 10, email_address: str | None = None) -> list[dict]:
     """
     Fetch email chưa đọc từ Gmail sau khi áp dụng 2 tầng lọc không tốn token.
 
@@ -159,11 +186,14 @@ async def fetch_unread_emails(user_id: str, limit: int = 10) -> list[dict]:
             ↓ Tier 2: Regex gate — loại email không liên quan hẹn gặp (0 token)
         [Emails passed to Agent]
             → Chỉ email này được gửi đến LLM (tiết kiệm token tối đa)
+    
+    Args:
+        email_address: (optional) Email cụ thể để fetch inbox riêng (multi-email)
     """
     from services.db_service import get_processed_email_ids, add_processed_email
 
     try:
-        service = await _get_gmail_service(user_id)
+        service = await _get_gmail_service(user_id, email_address=email_address)
 
         # ---------------------------------------------------------------
         # Bước 1: Lấy danh sách ID email chưa đọc (chỉ IDs, không lấy nội dung)
@@ -390,4 +420,197 @@ async def send_email(
         return {"success": False, "error": f"Chưa kết nối Gmail: {e}"}
     except Exception as e:
         print(f"[EmailTools] ❌ Send email error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Mail Panel API helpers — Dùng bởi REST endpoints
+# ---------------------------------------------------------------------------
+
+async def fetch_inbox_emails(
+    user_id: str,
+    email_address: str | None = None,
+    limit: int = 20,
+    query: str = "",
+) -> list[dict]:
+    """
+    Lấy danh sách email từ inbox (cho Mail Panel UI).
+    Không filter meeting — trả toàn bộ email.
+    
+    Args:
+        email_address: Email cụ thể để fetch inbox riêng
+        limit: Số lượng email tối đa
+        query: Gmail search query (optional, e.g. "is:unread")
+    """
+    try:
+        service = await _get_gmail_service(user_id, email_address=email_address)
+
+        q = query if query else "in:inbox"
+        results = service.users().messages().list(
+            userId="me",
+            q=q,
+            maxResults=limit,
+        ).execute()
+
+        messages = results.get("messages", [])
+        if not messages:
+            return []
+
+        emails = []
+        for msg_meta in messages:
+            try:
+                msg = service.users().messages().get(
+                    userId="me",
+                    id=msg_meta["id"],
+                    format="metadata",
+                    metadataHeaders=["From", "To", "Subject", "Date"],
+                ).execute()
+
+                headers = msg.get("payload", {}).get("headers", [])
+                label_ids = msg.get("labelIds", [])
+
+                emails.append({
+                    "id": msg["id"],
+                    "threadId": msg.get("threadId", ""),
+                    "snippet": msg.get("snippet", ""),
+                    "from": _get_header(headers, "From"),
+                    "to": _get_header(headers, "To"),
+                    "subject": _get_header(headers, "Subject"),
+                    "date": _get_header(headers, "Date"),
+                    "is_unread": "UNREAD" in label_ids,
+                    "is_starred": "STARRED" in label_ids,
+                    "account_email": email_address or "",
+                })
+            except Exception as e:
+                print(f"[EmailTools] Skip email {msg_meta['id']}: {e}")
+                continue
+
+        return emails
+
+    except Exception as e:
+        print(f"[EmailTools] Lỗi fetch inbox: {e}")
+        return []
+
+
+async def get_email_detail(
+    user_id: str,
+    gmail_id: str,
+    email_address: str | None = None,
+) -> dict | None:
+    """Lấy nội dung đầy đủ của 1 email."""
+    try:
+        service = await _get_gmail_service(user_id, email_address=email_address)
+        msg = service.users().messages().get(
+            userId="me",
+            id=gmail_id,
+            format="full",
+        ).execute()
+
+        headers = msg.get("payload", {}).get("headers", [])
+        label_ids = msg.get("labelIds", [])
+        body = _decode_email_body(msg.get("payload", {}))
+
+        return {
+            "id": msg["id"],
+            "threadId": msg.get("threadId", ""),
+            "from": _get_header(headers, "From"),
+            "to": _get_header(headers, "To"),
+            "subject": _get_header(headers, "Subject"),
+            "date": _get_header(headers, "Date"),
+            "body": body,
+            "snippet": msg.get("snippet", ""),
+            "is_unread": "UNREAD" in label_ids,
+            "label_ids": label_ids,
+        }
+    except Exception as e:
+        print(f"[EmailTools] Lỗi get detail {gmail_id}: {e}")
+        return None
+
+
+async def mark_email_read(
+    user_id: str,
+    gmail_id: str,
+    email_address: str | None = None,
+) -> bool:
+    """Đánh dấu email đã đọc (remove UNREAD label)."""
+    try:
+        service = await _get_gmail_service(user_id, email_address=email_address)
+        service.users().messages().modify(
+            userId="me",
+            id=gmail_id,
+            body={"removeLabelIds": ["UNREAD"]},
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"[EmailTools] Lỗi mark read {gmail_id}: {e}")
+        return False
+
+
+async def trash_email(
+    user_id: str,
+    gmail_id: str,
+    email_address: str | None = None,
+) -> bool:
+    """Chuyển email vào thùng rác."""
+    try:
+        service = await _get_gmail_service(user_id, email_address=email_address)
+        service.users().messages().trash(
+            userId="me",
+            id=gmail_id,
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"[EmailTools] Lỗi trash {gmail_id}: {e}")
+        return False
+
+
+async def reply_to_email(
+    user_id: str,
+    gmail_id: str,
+    reply_body: str,
+    email_address: str | None = None,
+) -> dict:
+    """
+    Trả lời một email. Giữ nguyên threadId để hiện trong cùng conversation.
+    """
+    from email.mime.text import MIMEText
+    
+    try:
+        service = await _get_gmail_service(user_id, email_address=email_address)
+        
+        # Lấy thông tin email gốc
+        original = service.users().messages().get(
+            userId="me", id=gmail_id, format="metadata",
+            metadataHeaders=["From", "Subject", "Message-ID"],
+        ).execute()
+        
+        orig_headers = original.get("payload", {}).get("headers", [])
+        orig_from = _get_header(orig_headers, "From")
+        orig_subject = _get_header(orig_headers, "Subject")
+        orig_message_id = _get_header(orig_headers, "Message-ID")
+        thread_id = original.get("threadId", "")
+        
+        # Subject: thêm "Re: " nếu chưa có
+        reply_subject = orig_subject if orig_subject.lower().startswith("re:") else f"Re: {orig_subject}"
+        
+        # Tạo MIME
+        message = MIMEText(reply_body, "plain", "utf-8")
+        message["To"] = orig_from
+        message["Subject"] = reply_subject
+        if orig_message_id:
+            message["In-Reply-To"] = orig_message_id
+            message["References"] = orig_message_id
+        
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        
+        sent = service.users().messages().send(
+            userId="me",
+            body={"raw": raw, "threadId": thread_id},
+        ).execute()
+        
+        print(f"[EmailTools] ✅ Reply sent. ID: {sent.get('id')}")
+        return {"success": True, "message_id": sent.get("id", "")}
+    
+    except Exception as e:
+        print(f"[EmailTools] ❌ Reply error: {e}")
         return {"success": False, "error": str(e)}

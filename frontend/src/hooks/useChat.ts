@@ -33,8 +33,7 @@ export function useChat() {
       if (!isMounted) return;
       try {
         const { user_id } = await initSession();
-        const wsUrl = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1")
-          .replace(/^http/, "ws") + `/ws/web/${user_id}`;
+        const wsUrl = "http://localhost:8000/api/v1".replace(/^http/, "ws") + `/ws/web/${user_id}`;
         
         const socket = new WebSocket(wsUrl);
         socket.onopen = () => {

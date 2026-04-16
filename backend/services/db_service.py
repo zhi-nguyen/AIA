@@ -113,6 +113,128 @@ async def init_db_tables(pool: asyncpg.Pool):
             );
         """)
 
+        # Bảng lưu nhiều tài khoản Google cho 1 user (multi-email)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_accounts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                google_id VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                encrypted_access_token TEXT,
+                encrypted_refresh_token TEXT,
+                is_primary BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, google_id)
+            );
+        """)
+
+        # Migration: copy dữ liệu từ bảng users cũ sang user_accounts (1 lần)
+        await conn.execute("""
+            INSERT INTO user_accounts (user_id, google_id, email, encrypted_access_token, encrypted_refresh_token, is_primary)
+            SELECT id, google_id, email, encrypted_access_token, encrypted_refresh_token, TRUE
+            FROM users
+            WHERE google_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_accounts ua WHERE ua.user_id = users.id AND ua.google_id = users.google_id
+              )
+        """)
+
+
+# ---------------------------------------------------------------------------
+# user_accounts helpers — Multi-email management
+# ---------------------------------------------------------------------------
+
+async def add_user_account(
+    user_id: str, google_id: str, email: str,
+    encrypted_access: str, encrypted_refresh: str | None,
+    is_primary: bool = False,
+) -> str:
+    """Thêm một tài khoản Google vào user. Nếu đã tồn tại thì cập nhật token."""
+    pool = await get_db_pool()
+    account_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        # UPSERT: nếu (user_id, google_id) đã tồn tại thì cập nhật token
+        await conn.execute(
+            """
+            INSERT INTO user_accounts (id, user_id, google_id, email, encrypted_access_token, encrypted_refresh_token, is_primary)
+            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
+            ON CONFLICT (user_id, google_id) DO UPDATE
+            SET encrypted_access_token = EXCLUDED.encrypted_access_token,
+                encrypted_refresh_token = COALESCE(EXCLUDED.encrypted_refresh_token, user_accounts.encrypted_refresh_token),
+                email = EXCLUDED.email
+            """,
+            account_id, user_id, google_id, email,
+            encrypted_access, encrypted_refresh, is_primary,
+        )
+    return account_id
+
+
+async def get_user_accounts(user_id: str) -> list[dict]:
+    """Lấy danh sách tất cả tài khoản email đã liên kết của user."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id::text, email, is_primary, created_at
+            FROM user_accounts
+            WHERE user_id = $1::uuid
+            ORDER BY is_primary DESC, created_at ASC
+            """,
+            user_id,
+        )
+        return [dict(r) for r in rows]
+
+
+async def delete_user_account(account_id: str, user_id: str) -> bool:
+    """Xoá một tài khoản email đã liên kết. Cho phép xoá bất kỳ, kể cả primary."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Kiểm tra account có tồn tại và lấy info
+        row = await conn.fetchrow(
+            "SELECT is_primary, email FROM user_accounts WHERE id = $1::uuid AND user_id = $2::uuid",
+            account_id, user_id,
+        )
+        if not row:
+            return False
+
+        was_primary = row["is_primary"]
+
+        # Xoá account
+        await conn.execute(
+            "DELETE FROM user_accounts WHERE id = $1::uuid AND user_id = $2::uuid",
+            account_id, user_id,
+        )
+
+        # Nếu xoá primary → xoá credentials khỏi bảng users
+        if was_primary:
+            await conn.execute(
+                """UPDATE users SET encrypted_access_token = NULL, encrypted_refresh_token = NULL,
+                   google_id = NULL, email = NULL WHERE id = $1::uuid""",
+                user_id,
+            )
+            # Nếu còn account khác → promote account cũ nhất thành primary
+            next_acc = await conn.fetchrow(
+                """SELECT id, email, google_id, encrypted_access_token, encrypted_refresh_token
+                   FROM user_accounts WHERE user_id = $1::uuid ORDER BY created_at ASC LIMIT 1""",
+                user_id,
+            )
+            if next_acc:
+                await conn.execute(
+                    "UPDATE user_accounts SET is_primary = TRUE WHERE id = $1::uuid",
+                    next_acc["id"],
+                )
+                # Đồng bộ credentials sang bảng users
+                await conn.execute(
+                    """UPDATE users SET email = $1, google_id = $2,
+                       encrypted_access_token = $3, encrypted_refresh_token = $4
+                       WHERE id = $5::uuid""",
+                    next_acc["email"], next_acc["google_id"],
+                    next_acc["encrypted_access_token"], next_acc["encrypted_refresh_token"],
+                    user_id,
+                )
+
+        return True
+
 
 async def create_guest_user() -> str:
     """Tạo guest user và trả về UUID."""
@@ -204,19 +326,60 @@ async def link_google_account(user_id: str, google_id: str, email: str, encrypte
             return user_id
 
 async def get_google_credentials(user_id: str) -> dict:
+    """Lấy credentials ưu tiên từ users, fallback sang user_accounts (primary)."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT encrypted_access_token, encrypted_refresh_token FROM users WHERE id = $1::uuid",
             user_id
         )
+        if row and row.get("encrypted_access_token"):
+            return dict(row)
+        
+        # Fallback: lấy từ user_accounts (ưu tiên primary)
+        row = await conn.fetchrow(
+            """SELECT encrypted_access_token, encrypted_refresh_token 
+               FROM user_accounts 
+               WHERE user_id = $1::uuid 
+               ORDER BY is_primary DESC, created_at ASC 
+               LIMIT 1""",
+            user_id
+        )
         return dict(row) if row else None
+
+
+async def get_credentials_for_email(email: str) -> dict | None:
+    """Lấy credentials cho một email cụ thể (dùng cho multi-email gmail_watch)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Tìm trong user_accounts trước
+        row = await conn.fetchrow(
+            """SELECT user_id::text, encrypted_access_token, encrypted_refresh_token 
+               FROM user_accounts WHERE email = $1""",
+            email
+        )
+        if row:
+            return dict(row)
+        # Fallback bảng users
+        row = await conn.fetchrow(
+            """SELECT id::text AS user_id, encrypted_access_token, encrypted_refresh_token 
+               FROM users WHERE email = $1""",
+            email
+        )
+        return dict(row) if row else None
+
 
 async def update_google_credentials(user_id: str, encrypted_access: str, encrypted_refresh: str):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE users SET encrypted_access_token = $1, encrypted_refresh_token = $2 WHERE id = $3::uuid",
+            encrypted_access, encrypted_refresh, user_id
+        )
+        # Đồng bộ cập nhật token cho tất cả accounts của user trong user_accounts
+        await conn.execute(
+            """UPDATE user_accounts SET encrypted_access_token = $1, encrypted_refresh_token = $2 
+               WHERE user_id = $3::uuid AND is_primary = TRUE""",
             encrypted_access, encrypted_refresh, user_id
         )
 
@@ -406,11 +569,21 @@ async def get_user_id_by_email(email: str) -> str | None:
     """
     Tìm user_id theo địa chỉ email Google đã link.
     Dùng bởi Gmail Watch listener để xác định notification thuộc user nào.
+    Tìm trong cả bảng users (primary) và user_accounts (multi-email).
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        # Tìm trong bảng users trước (primary email)
         row = await conn.fetchrow(
             "SELECT id::text FROM users WHERE email = $1",
+            email,
+        )
+        if row:
+            return row["id"]
+        
+        # Fallback: tìm trong bảng user_accounts (multi-email)
+        row = await conn.fetchrow(
+            "SELECT user_id::text AS id FROM user_accounts WHERE email = $1",
             email,
         )
         return row["id"] if row else None

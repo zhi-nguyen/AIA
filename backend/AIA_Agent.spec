@@ -2,11 +2,20 @@
 
 
 a = Analysis(
-    ['agent.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        ('credentials.json', '.'),
+        ('xiaoyue-api-key.json', '.'),
+        ('data-store-key.json', '.'),
+        ('../.env', '.')
+    ],
+    hiddenimports=[
+        'uvicorn',
+        'fastapi',
+        'pydantic_settings'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -22,14 +31,14 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AIA_Agent',
+    name='AIA_Agent-x86_64-pc-windows-msvc',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

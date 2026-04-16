@@ -129,13 +129,13 @@ def _get_user_lock(email: str) -> asyncio.Lock:
 async def _handle_notification(email_address: str, history_id: str):
     """
     Khi Pub/Sub báo có thay đổi mailbox:
-    1. Debounce — bỏ qua nếu vừa xử lý < 5s trước
+    1. Debounce — bỏ qua nếu vừa xử lý <5s trước
     2. Lock per-user — chỉ 1 lần fetch chạy đồng thời
     3. Gọi fetch_unread_emails (Tier 1 DB diff + Tier 2 Regex)
     4. Đẩy qua process_email_intent cho AI phân tích
     """
     import time
-    from services.db_service import get_user_id_by_email
+    from services.db_service import get_user_id_by_email, get_credentials_for_email
     from tools.email_tools import fetch_unread_emails, check_gmail_authorized
     from agents.email_agent import process_email_intent
 
@@ -152,6 +152,20 @@ async def _handle_notification(email_address: str, history_id: str):
         print(f"[GmailWatch] Khong tim thay user cho email={email_address}")
         return
 
+    # Đảm bảo credentials của email này có thể dùng được
+    # (Nếu là email phụ từ user_accounts, đồng bộ token vào bảng users)
+    email_creds = await get_credentials_for_email(email_address)
+    if email_creds and email_creds.get("encrypted_access_token"):
+        from services.db_service import get_google_credentials, update_google_credentials
+        primary_creds = await get_google_credentials(user_id)
+        if not primary_creds or not primary_creds.get("encrypted_access_token"):
+            # Bảng users chưa có token → copy từ user_accounts
+            await update_google_credentials(
+                user_id,
+                email_creds["encrypted_access_token"],
+                email_creds.get("encrypted_refresh_token", ""),
+            )
+
     if not await check_gmail_authorized(user_id):
         print(f"[GmailWatch] User {user_id[:8]}... chua cap phep Gmail")
         return
@@ -166,7 +180,7 @@ async def _handle_notification(email_address: str, history_id: str):
         print(f"[GmailWatch] Co email moi cho {email_address} (historyId={history_id})")
 
         try:
-            emails = await fetch_unread_emails(user_id=user_id, limit=10)
+            emails = await fetch_unread_emails(user_id=user_id, limit=10, email_address=email_address)
             print(f"[GmailWatch] -> {len(emails)} email qua bo loc")
 
             for email_data in emails:
