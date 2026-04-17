@@ -1,14 +1,23 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
 import { uploadFile, uploadImage, clearDocument, type UploadResult } from "@/lib/api";
 import { X, Send, Bot, Mail, Newspaper, FileText, Paperclip, Mic, Square, Hourglass, User, Volume2 } from "lucide-react";
+import type { Message } from "@/hooks/useChat";
+
+interface ChatState {
+  messages: Message[];
+  isLoading: boolean;
+  error: string | null;
+  send: (content: string) => void;
+  clearMessages: () => void;
+}
 
 interface AgentChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  chatState: ChatState;
 }
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -28,8 +37,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps) {
-  const { messages, isLoading, error, send, clearMessages } = useChat();
+export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChatPanelProps) {
+  const { messages, isLoading, error, send, clearMessages } = chatState;
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   
   const [input, setInput] = useState("");
@@ -179,7 +188,7 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
   const canSend = (input.trim().length > 0 || pendingFile !== null) && !isLoading && !isUploading;
 
   return (
-    <div className={`absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
+    <div className="absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in">
       {/* Header */}
       <div className="flex justify-between items-center bg-white border-b border-slate-100 p-5 shrink-0 shadow-sm z-10 relative">
         <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
@@ -249,7 +258,7 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.filter(msg => !msg.isLoading).map((msg) => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-md ${msg.role === 'user' ? 'bg-indigo-500 shadow-indigo-500/30 border border-indigo-400' : 'bg-slate-800'}`}>
               {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-white" />}

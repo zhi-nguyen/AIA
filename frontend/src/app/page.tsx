@@ -7,6 +7,7 @@ import {
 } from '@/lib/api';
 import MailPanel from '@/components/MailPanel';
 import AgentChatPanel from '@/components/AgentChatPanel';
+import { useChat } from '@/hooks/useChat';
 import {
   Settings, Mail, Calendar, Cloud, Newspaper,
   Bell, Lightbulb, MessageSquare, Plus, X,
@@ -387,12 +388,16 @@ const ConfigPanel = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void
 };
 
 
+
 // --- APP MAIN COMPONENT ---
 export default function AgentDashboard() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
   // Trạng thái các Panel trượt (Sidebar Con)
   const [activePanel, setActivePanel] = useState<'none' | 'chat' | 'notif' | 'email'>('none');
+
+  // Chat state - lifted to page level so WebSocket persists
+  const chatState = useChat();
 
   const togglePanel = (panel: 'chat' | 'notif' | 'email') => {
     setActivePanel(prev => prev === panel ? 'none' : panel);
@@ -600,52 +605,66 @@ export default function AgentDashboard() {
           ======== CÁC PANEL MỞ RỘNG (SLIDE-OVERS TỪ PHẢI) ======== 
         */}
 
-        {/* 1. NOTIFICATION PANEL */}
-        <div className={`absolute top-0 right-0 h-full w-[380px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col transition-transform duration-300 ease-in-out ${activePanel === 'notif' ? "translate-x-0" : "translate-x-full"}`}>
-          <div className="flex justify-between items-center bg-slate-50 border-b border-slate-100 p-5 shrink-0">
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
-              <Bell className="w-5 h-5 text-pink-500" /> Hệ thống cảnh báo
-            </h2>
-            <button onClick={() => setActivePanel('none')} className="p-2 bg-white text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            <div className="p-4 bg-red-50 border border-red-100 rounded-2xl">
-              <p className="text-sm font-bold text-red-700">Deadline báo cáo tháng QA</p>
-              <p className="text-xs text-red-600/80 mt-1">Còn 2 giờ nữa</p>
-            </div>
-            <div className="p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
-              <p className="text-sm font-bold text-slate-800">Cập nhật Windows ngầm</p>
-              <p className="text-xs text-slate-500 mt-1">Đã hoàn tất lúc sáng nay</p>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. EMAIL PANEL */}
-        <MailPanel isOpen={activePanel === 'email'} onClose={() => setActivePanel('none')} />
-
-        {/* 3. CHAT MÁY HỌC PANEL */}
-        <AgentChatPanel isOpen={activePanel === 'chat'} onClose={() => setActivePanel('none')} />
-
         {/* Nền làm mờ nội dung phía sau nếu có Panel nào đó đang mở */}
         {activePanel !== 'none' && (
           <div
             onClick={() => setActivePanel('none')}
-            className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px] z-20 cursor-pointer animate-in fade-in duration-200"
+            className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px] z-20 cursor-pointer"
           />
+        )}
+
+        {/* 1. NOTIFICATION PANEL */}
+        {activePanel === 'notif' && (
+          <div className="absolute top-0 right-0 h-full w-[380px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in">
+            <div className="flex justify-between items-center bg-slate-50 border-b border-slate-100 p-5 shrink-0">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
+                <Bell className="w-5 h-5 text-pink-500" /> Hệ thống cảnh báo
+              </h2>
+              <button type="button" onClick={() => setActivePanel('none')} className="p-2 bg-white text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl">
+                <p className="text-sm font-bold text-red-700">Deadline báo cáo tháng QA</p>
+                <p className="text-xs text-red-600/80 mt-1">Còn 2 giờ nữa</p>
+              </div>
+              <div className="p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
+                <p className="text-sm font-bold text-slate-800">Cập nhật Windows ngầm</p>
+                <p className="text-xs text-slate-500 mt-1">Đã hoàn tất lúc sáng nay</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2. EMAIL PANEL */}
+        {activePanel === 'email' && (
+          <MailPanel isOpen={true} onClose={() => setActivePanel('none')} />
+        )}
+
+        {/* 3. CHAT MÁY HỌC PANEL */}
+        {activePanel === 'chat' && (
+          <AgentChatPanel isOpen={true} onClose={() => setActivePanel('none')} chatState={chatState} />
         )}
       </div>
 
       <ConfigPanel isOpen={isConfigOpen} onClose={() => setIsConfigOpen(false)} />
 
-      {/* Global CSS scrollbar */}
+      {/* Global CSS */}
       <style dangerouslySetInnerHTML={{
         __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+
+        @keyframes slideInRight {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        .panel-slide-in {
+          animation: slideInRight 0.3s ease-out forwards;
+        }
       `}} />
     </div>
   );

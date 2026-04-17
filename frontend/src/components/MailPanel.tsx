@@ -35,12 +35,62 @@ function relativeTime(dateStr: string): string {
   } catch { return dateStr; }
 }
 
-// === Module-level cache — tồn tại qua các lần mở/đóng panel ===
+// === LocalStorage Cache & Pending Queue Helpers ===
 const CACHE_TTL = 5 * 60 * 1000; // 5 phút
 const _emailCache: Record<string, { data: EmailItem[]; ts: number }> = {};
 const _detailCache: Record<string, { data: EmailDetail; ts: number }> = {};
 
 function getCacheKey(filter: string) { return filter || '__all__'; }
+
+const LOCAL_STORAGE_KEY_PREFIX = 'aia_emails_';
+const PENDING_ACTIONS_KEY = 'aia_pending_mail_actions';
+
+interface PendingAction {
+  id: string;
+  type: 'read' | 'trash' | 'reply';
+  gmailId: string;
+  accountEmail?: string;
+  body?: string;
+  timestamp: number;
+}
+
+function addPendingAction(action: Omit<PendingAction, 'id'|'timestamp'>) {
+  try {
+    const pendingJson = localStorage.getItem(PENDING_ACTIONS_KEY);
+    const pending: PendingAction[] = pendingJson ? JSON.parse(pendingJson) : [];
+    pending.push({ ...action, id: Math.random().toString(), timestamp: Date.now() });
+    localStorage.setItem(PENDING_ACTIONS_KEY, JSON.stringify(pending));
+  } catch (e) {
+    console.error('Failed to save pending action', e);
+  }
+}
+
+async function processPendingActions(loadEmailsFn?: (force?: boolean) => void) {
+  if (!navigator.onLine) return;
+  try {
+    const pendingJson = localStorage.getItem(PENDING_ACTIONS_KEY);
+    const pending: PendingAction[] = pendingJson ? JSON.parse(pendingJson) : [];
+    
+    // Nếu có action pending thì xử lý
+    if (pending.length > 0) {
+      for (const action of pending) {
+        try {
+          if (action.type === 'read') await markEmailRead(action.gmailId, action.accountEmail);
+          else if (action.type === 'trash') await trashEmail(action.gmailId, action.accountEmail);
+          else if (action.type === 'reply') await replyToEmail(action.gmailId, action.body!, action.accountEmail);
+        } catch (err) {
+          console.error(`Failed to process action ${action.type}:`, err);
+        }
+      }
+      localStorage.removeItem(PENDING_ACTIONS_KEY); // Clear queue
+    }
+    
+    // Xử lý xong hoặc có mạng lại thì force fetch inbox mới nhất (Đồng bộ nhỡ inbox)
+    if (loadEmailsFn) loadEmailsFn(true);
+  } catch (e) {
+    console.error('Lỗi khi sync pending list', e);
+  }
+}
 
 export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
   // === State ===
@@ -65,15 +115,32 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
     getLinkedAccounts().then(d => setAccounts(d.accounts || [])).catch(() => {});
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // === Load emails (with cache) ===
+  // === Load emails (with JSON localStorage cache) ===
   const loadEmails = useCallback(async (force = false) => {
     const key = getCacheKey(filterEmail);
-    const cached = _emailCache[key];
+    let cached = _emailCache[key];
+
+    // Read from localStorage if memory cache is unset
+    if (!cached) {
+      try {
+        const localData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}${key}`);
+        if (localData) cached = JSON.parse(localData);
+      } catch (e) {
+        console.error('Parse localStorage error:', e);
+      }
+    }
 
     // Trả cache nếu còn hạn + không force refresh
     if (!force && cached && (Date.now() - cached.ts) < CACHE_TTL) {
       setEmails(cached.data);
+      _emailCache[key] = cached; // warm up memory
       return;
+    }
+
+    // Nếu lúc này đang mất mạng (offline), nhưng vẫn muốn coi mail:
+    if (!navigator.onLine && cached) {
+      setEmails(cached.data);
+      return; 
     }
 
     setLoading(true);
@@ -84,10 +151,37 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
       });
       const list = data.emails || [];
       setEmails(list);
-      _emailCache[key] = { data: list, ts: Date.now() };
-    } catch { setEmails([]); }
+      const cacheObj = { data: list, ts: Date.now() };
+      _emailCache[key] = cacheObj;
+      try {
+        localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${key}`, JSON.stringify(cacheObj));
+      } catch (e) {}
+    } catch { 
+      if (!cached) setEmails([]); 
+    }
     setLoading(false);
   }, [filterEmail]);
+
+  // Hook sync online
+  useEffect(() => {
+    const handleOnline = () => processPendingActions(loadEmails);
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [loadEmails]);
+
+  // Hook lắng nghe sự kiện push mail mới
+  useEffect(() => {
+    const handleNewProposal = (e: Event) => {
+      const { detail } = e as CustomEvent;
+      if (detail.type === "NEW_PROPOSAL" || detail.source === "email_secretary") {
+        // Có mail mới -> tự động refresh box (lưu vào localJSON)
+        // Set timeout tí để đợi DB update
+        setTimeout(() => loadEmails(true), 1000); 
+      }
+    };
+    window.addEventListener("proposal_received", handleNewProposal);
+    return () => window.removeEventListener("proposal_received", handleNewProposal);
+  }, [loadEmails]);
 
   useEffect(() => {
     if (isOpen) loadEmails();
@@ -114,14 +208,21 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
 
       setSelectedEmail(detail);
 
-      // Mark as read
+      // Mark as read (Speculative updates UI immediately)
       if (email.is_unread) {
-        await markEmailRead(email.id, email.account_email);
+        if (navigator.onLine) {
+          await markEmailRead(email.id, email.account_email).catch(() => {});
+        } else {
+          // Push to pending list nếu mất mạng
+          addPendingAction({ type: 'read', gmailId: email.id, accountEmail: email.account_email });
+        }
+        
         setEmails(prev => {
           const updated = prev.map(e => e.id === email.id ? { ...e, is_unread: false } : e);
-          // Sync list cache
           const key = getCacheKey(filterEmail);
-          _emailCache[key] = { data: updated, ts: Date.now() };
+          const cacheObj = { data: updated, ts: Date.now() };
+          _emailCache[key] = cacheObj;
+          try { localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${key}`, JSON.stringify(cacheObj)); } catch (e) {}
           return updated;
         });
       }
@@ -132,21 +233,28 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
   const handleTrash = async () => {
     if (!selectedEmail) return;
     try {
-      await trashEmail(selectedEmail.id, selectedEmail.account_email);
+      if (navigator.onLine) {
+        await trashEmail(selectedEmail.id, selectedEmail.account_email);
+      } else {
+        // Push to pending queue
+        addPendingAction({ type: 'trash', gmailId: selectedEmail.id, accountEmail: selectedEmail.account_email });
+      }
+
       setEmails(prev => {
         const updated = prev.filter(e => e.id !== selectedEmail.id);
-        // Invalidate list cache
         const key = getCacheKey(filterEmail);
-        _emailCache[key] = { data: updated, ts: Date.now() };
+        const cacheObj = { data: updated, ts: Date.now() };
+        _emailCache[key] = cacheObj;
+        try { localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${key}`, JSON.stringify(cacheObj)); } catch (e) {}
         return updated;
       });
-      // Remove detail cache
       delete _detailCache[`${selectedEmail.account_email}:${selectedEmail.id}`];
       setView('list');
       setSelectedEmail(null);
     } catch (e) { console.error('Trash error:', e); }
   };
 
+  // === Handlers === (Reply)
   const handleReply = () => {
     setReplyText('');
     setView('reply');
@@ -156,7 +264,11 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
     if (!selectedEmail || !replyText.trim()) return;
     setReplySending(true);
     try {
-      await replyToEmail(selectedEmail.id, replyText, selectedEmail.account_email);
+      if (navigator.onLine) {
+        await replyToEmail(selectedEmail.id, replyText, selectedEmail.account_email);
+      } else {
+        addPendingAction({ type: 'reply', gmailId: selectedEmail.id, accountEmail: selectedEmail.account_email, body: replyText });
+      }
       setView('detail');
       setReplyText('');
     } catch (e) { console.error('Reply error:', e); }
@@ -171,7 +283,7 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
 
   // === RENDER ===
   return (
-    <div className={`absolute top-0 right-0 h-full w-[420px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
+    <div className="absolute top-0 right-0 h-full w-[420px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in">
 
       {/* ───── HEADER ───── */}
       <div className="flex justify-between items-center bg-slate-50 border-b border-slate-100 p-4 shrink-0">
@@ -324,7 +436,12 @@ export default function MailPanel({ isOpen, onClose }: MailPanelProps) {
                 <button
                   onClick={async () => {
                     if (selectedEmail.is_unread) {
-                      await markEmailRead(selectedEmail.id, selectedEmail.account_email);
+                      if (navigator.onLine) {
+                        await markEmailRead(selectedEmail.id, selectedEmail.account_email).catch(() => {});
+                      } else {
+                        addPendingAction({ type: 'read', gmailId: selectedEmail.id, accountEmail: selectedEmail.account_email });
+                      }
+                      
                       setEmails(prev => prev.map(e => e.id === selectedEmail.id ? { ...e, is_unread: false } : e));
                       setSelectedEmail({ ...selectedEmail, is_unread: false });
                     }
