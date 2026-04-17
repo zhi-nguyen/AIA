@@ -585,3 +585,15 @@ export async function replyToEmail(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+/**
+ * Lấy lịch sử sử dụng Token
+ */
+export async function getTokenUsage(): Promise<{ status: string; period: string; tokens_in: number; tokens_out: number }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/user/tokens`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch token usage" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

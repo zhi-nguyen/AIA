@@ -30,15 +30,15 @@ function ActionIcon({ type }: { type: SuggestedAction["action_type"] }) {
 function ConfidenceBadge({ confidence }: { confidence?: number }) {
   if (confidence == null) return null;
   const pct = Math.round(confidence * 100);
-  const color = pct >= 70 ? "var(--success-color, #22c55e)" : pct >= 40 ? "var(--warn-color, #f59e0b)" : "var(--muted-color, #6b7280)";
+  const isHigh = pct >= 70;
+  const isMed = pct >= 40;
+  const colorClass = isHigh ? "text-emerald-600" : isMed ? "text-amber-500" : "text-slate-500";
   return (
-    <span className="proposal-card__confidence" style={{ color, fontSize: "0.72rem", fontWeight: 600 }}>
+    <span className={`${colorClass} text-[11px] font-bold tracking-tight whitespace-nowrap`}>
       {pct}% khớp
     </span>
   );
 }
-
-
 
 export default function ProposalCard({ proposal, onApprove, onDismiss }: ProposalCardProps) {
   const { id, source, status, error, timestamp } = proposal;
@@ -169,42 +169,35 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
   };
 
   return (
-    <div className={`proposal-card proposal-card--${source}`}>
+    <div className={`bg-white border rounded-2xl shadow-sm p-4 overflow-hidden mb-3 border-slate-200 transition-all hover:shadow-md ${isWeatherSystem ? 'border-amber-200 bg-amber-50/30' : ''}`}>
 
       {/* Header */}
-      <div className="proposal-card__header">
-        <span className="proposal-card__badge">{badge}</span>
+      <div className="flex justify-between items-center mb-3 pb-3 border-b border-slate-100">
+        <span className={`text-[11px] font-bold px-2.5 py-1 ${isWeatherSystem ? 'bg-amber-100 text-amber-800' : isEmailSecretary ? 'bg-indigo-100 text-indigo-700' : 'bg-sky-100 text-sky-700'} rounded-lg whitespace-nowrap`}>
+          {badge}
+        </span>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <ConfidenceBadge confidence={proposal.confidence} />
-          <button className="proposal-card__close" onClick={() => onDismiss(id)} title="Bỏ qua">
+          <button className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors" onClick={() => onDismiss(id)} title="Bỏ qua">
             <X size={16} />
           </button>
         </div>
       </div>
 
       {/* Title + sender */}
-      <h3 className="proposal-card__title">{title}</h3>
+      <h3 className="text-sm font-semibold text-slate-800 leading-snug mb-1.5">{title}</h3>
       {fromLine && (
-        <p className="proposal-card__meta">
-          <Mail size={12} /> {fromLine}
+        <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1.5 mb-2.5">
+          <Mail size={12} className="text-slate-400" /> {fromLine}
         </p>
       )}
-      {subtitle && <p className="proposal-card__summary">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-slate-700 bg-slate-50/80 p-3 rounded-xl border border-slate-100/80 leading-relaxed mb-3">{subtitle}</p>}
 
       {/* Weather details */}
       {isWeatherSystem && proposal.weather_details && (
-        <div style={{
-          padding: "10px 12px",
-          background: "rgba(245, 158, 11, 0.08)",
-          borderRadius: "8px",
-          border: "1px solid rgba(245, 158, 11, 0.25)",
-          display: "flex",
-          alignItems: "flex-start",
-          gap: "8px",
-          marginTop: "4px",
-        }}>
-          <CloudRain size={16} style={{ color: "#f59e0b", marginTop: "1px", flexShrink: 0 }} />
-          <span style={{ fontSize: "12px", color: "#fcd34d", lineHeight: 1.5 }}>
+        <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-xl border border-amber-200/60 mb-3">
+          <CloudRain size={16} className="text-amber-500 mt-0.5 shrink-0" />
+          <span className="text-xs text-amber-700 leading-relaxed">
             {proposal.weather_details}
           </span>
         </div>
@@ -212,7 +205,7 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
 
       {/* Preview (legacy news agent body or email snippet) */}
       {!isEmailSecretary && !isWeatherSystem && proposal.payload?.body && (
-        <div className="proposal-card__body-preview">
+        <div className="text-xs italic text-slate-500 bg-slate-50/50 p-3 rounded-xl border border-slate-100 mb-3 line-clamp-3">
           {proposal.payload.body.substring(0, 160)}
           {proposal.payload.body.length > 160 ? "…" : ""}
         </div>
@@ -322,24 +315,12 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
           </div>
 
           <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-            <button onClick={() => setEditingIndex(null)} style={{ padding: "6px 14px", background: "transparent", border: "1px solid #555", color: "#cbd5e1", borderRadius: "6px", cursor: "pointer", fontSize: "13px" }}>
+            <button onClick={() => setEditingIndex(null)} className="px-3.5 py-1.5 bg-transparent border border-gray-500 text-gray-300 rounded-lg hover:bg-gray-800 transition-colors cursor-pointer text-[13px] font-medium">
               Hủy
             </button>
             <button
               onClick={handleSendModified}
-              style={{
-                padding: "6px 14px",
-                background: actions[editingIndex]?.action_type === "cancel_event" ? "#dc2626" : "#2563eb",
-                border: "none",
-                color: "white",
-                borderRadius: "6px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                fontSize: "13px",
-                fontWeight: 500,
-              }}
+              className={`px-3.5 py-1.5 text-white rounded-lg cursor-pointer flex items-center gap-1.5 text-[13px] font-semibold transition-colors shadow-sm ${actions[editingIndex]?.action_type === "cancel_event" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
             >
               <Send size={14} />
               {actions[editingIndex]?.action_type === "cancel_event"
@@ -351,48 +332,62 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
           </div>
         </div>
       ) : (
-        <div className="proposal-card__actions">
-          {status === "pending" && actions.map((action, idx) => (
+        <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
+          {status === "pending" && actions.map((action, idx) => {
+            const isDismiss = action.action_type === "ignore";
+            return (
+              <button
+                key={idx}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors shadow-none ${isDismiss ? "bg-slate-50 text-slate-600 hover:bg-red-50 hover:text-red-700 border border-slate-200 hover:border-red-200" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"}`}
+                onClick={() => handleActionClick(idx, action)}
+                title={action.label}
+              >
+                <ActionIcon type={action.action_type} />
+                {action.label}
+              </button>
+            );
+          })}
+          
+          {status === "pending" && !actions.some(a => a.action_type === "ignore") && (
             <button
-              key={idx}
-              className={`proposal-btn proposal-btn--${action.action_type === "ignore" ? "dismiss" : "approve"}`}
-              onClick={() => handleActionClick(idx, action)}
-              title={action.label}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors shadow-none bg-slate-50 text-slate-600 hover:bg-red-50 hover:text-red-700 border border-slate-200 hover:border-red-200"
+              onClick={() => onDismiss(id)}
+              title="Bỏ qua đề xuất này"
             >
-              <ActionIcon type={action.action_type} />
-              {action.label}
+              <Ban size={15} /> Bỏ qua
             </button>
-          ))}
+          )}
 
 
         {status === "sending" && (
-          <button className="proposal-btn proposal-btn--sending" disabled>
-            <Clock size={15} className="animate-spin" />
+          <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200 cursor-wait w-full justify-center" disabled>
+            <Clock size={15} className="animate-spin text-slate-400" />
             Đang xử lý...
           </button>
         )}
 
         {status === "sent" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: "100%" }}>
-            <button className="proposal-btn proposal-btn--success" disabled>
-              <CheckCircle2 size={15} />
+          <div className="flex flex-col gap-2 w-full">
+            <button className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default" disabled>
+              <CheckCircle2 size={16} />
               Hoàn thành! Đã lưu Database & Gửi Email.
             </button>
             {actions[proposal.activeActionIndex]?.action_type === "create_event" && (
-              <span style={{ fontSize: "12px", color: "#60a5fa", textAlign: "center" }}>
-                (Sự kiện đã được đồng bộ vào Tab "Lịch hẹn")
+              <span className="text-[11px] font-semibold text-emerald-600/80 text-center block">
+                (Sự kiện đã được đồng bộ vào Lịch hệ thống)
               </span>
             )}
           </div>
         )}
 
         {status === "error" && (
-          <div className="proposal-error">
-            <AlertCircle size={14} />
-            {error || "Lỗi khi thực thi"}
+          <div className="flex items-center justify-between gap-2 p-2 rounded-lg text-xs font-medium bg-red-50 text-red-700 border border-red-200 w-full">
+            <div className="flex items-center gap-1.5 truncate">
+              <AlertCircle size={14} className="shrink-0" />
+              <span className="truncate">{error || "Lỗi khi thực thi"}</span>
+            </div>
             <button
-              className="proposal-btn proposal-btn--approve"
-              style={{ marginLeft: "8px", padding: "2px 10px" }}
+              className="px-2.5 py-1 bg-white border border-red-200 rounded-md text-red-700 hover:bg-red-100 transition-colors shrink-0 font-bold"
               onClick={() => setEditingIndex(proposal.activeActionIndex)}
             >
               Thử lại / Sửa

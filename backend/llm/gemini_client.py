@@ -8,6 +8,22 @@ from google import genai
 from google.genai import types
 from typing import Optional
 from config import get_settings
+import contextvars
+from datetime import datetime
+
+# Biến ContextVar để chứa user_id hiện tại (được gán từ task/router)
+current_user_id = contextvars.ContextVar("current_user_id", default=None)
+
+def _dispatch_token_task(tokens_in: int, tokens_out: int):
+    user_id = current_user_id.get()
+    if not user_id:
+        return
+    period = datetime.now().strftime("%Y-%m")
+    try:
+        from tasks import save_token_usage_task
+        save_token_usage_task.delay(user_id, period, tokens_in, tokens_out)
+    except Exception as e:
+        print(f"[Tokens] Task dispatch error: {e}")
 
 DEFAULT_SAFETY_SETTINGS = [
     types.SafetySetting(
@@ -72,7 +88,10 @@ class GeminiClient:
         )
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             u = response.usage_metadata
-            print(f"[Tokens Pro] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+            tin = getattr(u, 'prompt_token_count', 0)
+            tout = getattr(u, 'candidates_token_count', 0)
+            print(f"[Tokens Pro] In: {tin} | Out: {tout} | Total: {getattr(u, 'total_token_count', 0)}")
+            _dispatch_token_task(tin, tout)
         return response.text
 
     def generate_flash(
@@ -116,7 +135,10 @@ class GeminiClient:
         )
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             u = response.usage_metadata
-            print(f"[Tokens Flash] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+            tin = getattr(u, 'prompt_token_count', 0)
+            tout = getattr(u, 'candidates_token_count', 0)
+            print(f"[Tokens Flash] In: {tin} | Out: {tout} | Total: {getattr(u, 'total_token_count', 0)}")
+            _dispatch_token_task(tin, tout)
         return response.text
 
     def stream_pro(
@@ -144,7 +166,10 @@ class GeminiClient:
         ):
             if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                 u = chunk.usage_metadata
-                print(f"[Tokens Pro Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+                tin = getattr(u, 'prompt_token_count', 0)
+                tout = getattr(u, 'candidates_token_count', 0)
+                print(f"[Tokens Pro Stream] In: {tin} | Out: {tout} | Total: {getattr(u, 'total_token_count', 0)}")
+                _dispatch_token_task(tin, tout)
             if chunk.text:
                 yield chunk.text
 
@@ -172,7 +197,10 @@ class GeminiClient:
         ):
             if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                 u = chunk.usage_metadata
-                print(f"[Tokens Flash Stream] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+                tin = getattr(u, 'prompt_token_count', 0)
+                tout = getattr(u, 'candidates_token_count', 0)
+                print(f"[Tokens Flash Stream] In: {tin} | Out: {tout} | Total: {getattr(u, 'total_token_count', 0)}")
+                _dispatch_token_task(tin, tout)
             if chunk.text:
                 yield chunk.text
 
@@ -203,7 +231,10 @@ class GeminiClient:
         )
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             u = response.usage_metadata
-            print(f"[Tokens Search Grounded] In: {getattr(u, 'prompt_token_count', 0)} | Out: {getattr(u, 'candidates_token_count', 0)} | Total: {getattr(u, 'total_token_count', 0)}")
+            tin = getattr(u, 'prompt_token_count', 0)
+            tout = getattr(u, 'candidates_token_count', 0)
+            print(f"[Tokens Search Grounded] In: {tin} | Out: {tout} | Total: {getattr(u, 'total_token_count', 0)}")
+            _dispatch_token_task(tin, tout)
         return response.text
 
 

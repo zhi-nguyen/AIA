@@ -632,6 +632,8 @@ async def execute_proposal(
 
     valid_recipients = [str(r).strip() for r in request.recipients if "@" in str(r)]
 
+    result = {}
+
     # ── 1. Gửi email (nếu có nội dung) ──────────────────────
     if request.body and request.body.strip():
         if not valid_recipients:
@@ -1008,3 +1010,21 @@ async def reply_to_email_endpoint(
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "Reply failed"))
     return {"status": "ok", "message_id": result.get("message_id", "")}
+
+
+# === Token Usage API ===
+
+@router.get("/user/tokens")
+async def get_user_token_usage(user_id: str = Depends(get_current_user_id)):
+    """Lấy thống kê sử dụng Token (In/Out) cho kỳ hiện tại."""
+    from services.db_service import get_token_usage
+    import datetime
+    period = datetime.datetime.now().strftime("%Y-%m")
+    usage = await get_token_usage(user_id, period)
+    return {
+        "status": "ok",
+        "period": period,
+        "tokens_in": usage.get("tokens_in", 0),
+        "tokens_out": usage.get("tokens_out", 0)
+    }
+

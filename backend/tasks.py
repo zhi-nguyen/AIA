@@ -14,9 +14,21 @@ def get_or_create_eventloop():
         return loop
 
 
+# ── System tasks ──────────────────────────────────────────────────────────────
+@celery_app.task(name="tasks.save_token_usage_task", ignore_result=True)
+def save_token_usage_task(user_id: str, period: str, tokens_in: int, tokens_out: int):
+    try:
+        from services.db_service import add_token_usage
+        loop = get_or_create_eventloop()
+        loop.run_until_complete(add_token_usage(user_id, period, tokens_in, tokens_out))
+    except Exception as e:
+        print(f"[Tokens] Task record error: {e}")
+
 # ── Chat task ──────────────────────────────────────────────────────────────
 @celery_app.task(bind=True, name="tasks.process_chat")
 def process_chat(self, user_id: str, message: str, doc_context: str, image_context: str, image_filename: str):
+    from llm.gemini_client import current_user_id
+    current_user_id.set(user_id)
     try:
         combined_context = doc_context
         if image_context:
@@ -122,6 +134,9 @@ def process_user_emails(self, user_id: str):
     """
     import asyncio
     import traceback
+    from llm.gemini_client import current_user_id
+
+    current_user_id.set(user_id)
 
     async def _run():
         from tools.email_tools import fetch_unread_emails, check_gmail_authorized

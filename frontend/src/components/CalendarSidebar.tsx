@@ -158,41 +158,32 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
     return localISOTime;
   };
 
-  return (
-    <div
-      className={`weather-sidebar-overlay ${isOpen ? "weather-sidebar-overlay--open" : ""}`}
-      onClick={onClose}
-    >
-      <div
-        className={`weather-sidebar ${isOpen ? "weather-sidebar--open" : ""}`}
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "420px", display: "flex", flexDirection: "column" }}
-      >
-        {/* Header */}
-        <div className="weather-sidebar__header">
-          <div className="weather-sidebar__header-left">
-            <Calendar size={20} style={{ color: "#60a5fa" }} />
-            <h3 className="weather-sidebar__title">Lịch hẹn</h3>
-            {events.length > 0 && (
-              <span className="calendar-sidebar__count">{events.length}</span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button
-              className="weather-sidebar__refresh"
-              onClick={fetchEvents}
-              disabled={isRefreshing}
-              title="Tải lại"
-            >
-              <RefreshCw size={16} className={isRefreshing ? "weather-spin" : ""} />
-            </button>
-            <button className="weather-sidebar__close" onClick={onClose}>
-              <X size={18} />
-            </button>
-          </div>
-        </div>
+  if (!isOpen) return null;
 
-        {/* Content */}
+  return (
+    <div className="absolute top-0 right-0 h-full w-[420px] bg-slate-900 shadow-2xl border-l border-slate-700 z-30 flex flex-col panel-slide-in text-white text-sm">
+      {/* Header */}
+      <div className="flex justify-between items-center bg-slate-800 border-b border-slate-700 p-5 shrink-0">
+        <h2 className="font-bold text-white flex items-center gap-2 text-lg">
+          <Calendar size={20} className="text-blue-400" /> Lịch hẹn
+          {events.length > 0 && <span className="ml-2 px-2.5 py-0.5 bg-blue-500/20 text-blue-400 text-xs font-bold rounded-full">{events.length}</span>}
+        </h2>
+        <div className="flex gap-2 items-center">
+          <button
+            className="p-2 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 rounded-xl transition-colors border border-slate-700"
+            onClick={fetchEvents}
+            disabled={isRefreshing}
+            title="Tải lại"
+          >
+            <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+          </button>
+          <button className="p-2 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 rounded-xl transition-colors border border-slate-700" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
         <div className="weather-sidebar__content" style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "16px" }}>
           
           {/* Calendar Grid Widget */}
@@ -387,7 +378,6 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
               ))}
             </div>
           )}
-        </div>
       </div>
     </div>
   );
