@@ -1028,3 +1028,23 @@ async def get_user_token_usage(user_id: str = Depends(get_current_user_id)):
         "tokens_out": usage.get("tokens_out", 0)
     }
 
+# === News API ===
+
+@router.get("/user/news")
+async def get_recommended_news(user_id: str = Depends(get_current_user_id)):
+    """Lấy danh sách tin tức đề xuất từ Vertex AI Search dựa trên interests."""
+    from memory.user_context import get_user_profile
+    from tools.news_tools import search_vertex_store
+    
+    profile = await get_user_profile(user_id)
+    if not profile or not profile.interests:
+        return {"status": "ok", "news": []}
+        
+    query_str = " ".join(profile.interests)
+    
+    try:
+        results = search_vertex_store(query=query_str, top_k=10)
+        return {"status": "ok", "news": results}
+    except Exception as e:
+        print(f"[News API] Lỗi lấy tin từ Vertex Store: {e}")
+        return {"status": "error", "news": []}

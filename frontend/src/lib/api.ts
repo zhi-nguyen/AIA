@@ -597,3 +597,15 @@ export async function getTokenUsage(): Promise<{ status: string; period: string;
   }
   return res.json();
 }
+
+/**
+ * Lấy danh sách tin tức đề xuất từ Vertex Store
+ */
+export async function getRecommendedNews(): Promise<{ status: string; news: any[] }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/user/news`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch news" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}

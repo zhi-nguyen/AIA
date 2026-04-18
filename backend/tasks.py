@@ -403,3 +403,89 @@ def check_weather_before_event(self, event_id: str, user_id: str):
     except Exception:
         traceback.print_exc()
 
+# ── News Scraping Task ────────────────────────────────────────────────────────
+@celery_app.task(bind=True, name="tasks.fetch_and_index_news_task")
+def fetch_and_index_news_task(self):
+    """
+    Quét tin tức theo cấu hình của người dùng. Tải và đẩy lên Vertex Store.
+    """
+    import asyncio
+    import traceback
+    import hashlib
+
+    async def _run():
+        from services.db_service import get_db_pool
+        from memory.user_context import get_user_profile
+        from tools.news_tools import fetch_rss_news, search_google_news, push_to_vertex_search
+
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # Thu thập toàn bộ danh sách user (Mockup: query sessions hoặc events proxy user_id)
+            rows = await conn.fetch("SELECT user_id::text FROM user_sessions")
+            user_ids = list(set([row["user_id"] for row in rows if row["user_id"]]))
+            if "default_user" not in user_ids:
+                user_ids.append("default_user")
+
+        processed_urls = set()
+        total_pushed = 0
+
+        for uid in user_ids:
+            profile = await get_user_profile(uid)
+            if not profile: continue
+            
+            interests = profile.interests or []
+            urls = profile.preferred_news_sources or []
+            if not interests and not urls:
+                continue
+                
+            articles = []
+            
+            # 1. Fetch bằng URLs Custom (dùng rss fallback)
+            for url in urls:
+                try:
+                    res = fetch_rss_news(url, source_name="Feed", limit=5)
+                    for a in res:
+                        if a["url"] not in processed_urls:
+                            a["tag"] = "Nguồn yêu thích"
+                            articles.append(a)
+                            processed_urls.add(a["url"])
+                except Exception as e:
+                    print(f"[NewsTask] URL {url} err: {e}")
+                    
+            # 2. Ngôn từ sở thích (Google News)
+            for tag in interests:
+                try:
+                    res = search_google_news(tag, limit=3, lang="vi")
+                    for a in res:
+                        if a["url"] not in processed_urls:
+                            a["tag"] = tag
+                            articles.append(a)
+                            processed_urls.add(a["url"])
+                except Exception as e:
+                    print(f"[NewsTask] Interest {tag} err: {e}")
+
+            # Push vào Vertex Search
+            for a in articles:
+                doc_id = hashlib.md5(a["url"].encode()).hexdigest()
+                doc = {
+                    "id": doc_id,
+                    "title": a["title"],
+                    "content": a.get("summary", "") or a["title"],
+                    "metadata": {
+                        "source": a["source"],
+                        "url": a["url"],
+                        "published": a.get("published", ""),
+                        "tag": a.get("tag", "Chung"),
+                    }
+                }
+                success = push_to_vertex_search(doc)
+                if success:
+                    total_pushed += 1
+
+        print(f"[NewsTask] Completed. Pushed {total_pushed} new documents to Vertex DB.")
+
+    loop = get_or_create_eventloop()
+    try:
+        loop.run_until_complete(_run())
+    except Exception:
+        traceback.print_exc()

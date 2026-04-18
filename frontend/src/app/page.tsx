@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   getWeather, getProposals, getLinkedAccounts, deleteLinkedAccount,
-  getGoogleAuthUrl, initSession, getUserProfile, createUserProfile, getTokenUsage, type LinkedAccount
+  getGoogleAuthUrl, initSession, getUserProfile, createUserProfile, getTokenUsage, getRecommendedNews, type LinkedAccount
 } from '@/lib/api';
 import MailPanel from '@/components/MailPanel';
 import AgentChatPanel from '@/components/AgentChatPanel';
@@ -14,7 +14,7 @@ import { useProposals } from '@/hooks/useProposals';
 import {
   Settings, Mail, Calendar, Cloud, Newspaper,
   Bell, Lightbulb, MessageSquare, Plus, X,
-  ToggleRight, ToggleLeft, Send, CheckCircle2, User, LayoutGrid, RotateCw, Hash, Link2, ExternalLink, Globe, MapPin, Save, Zap, Activity, Cpu, TrendingUp
+  ToggleRight, ToggleLeft, Send, CheckCircle2, User, LayoutGrid, RotateCw, Hash, Link2, ExternalLink, Globe, MapPin, Save, Zap, Activity, Cpu, TrendingUp, Clock
 } from 'lucide-react';
 
 // --- THÀNH PHẦN UI CƠ BẢN ---
@@ -442,6 +442,7 @@ export default function AgentDashboard() {
   // === REAL API DATA ===
   const [weatherData, setWeatherData] = useState<any>(null);
   const [tokenUsage, setTokenUsage] = useState({ in: 0, out: 0 });
+  const [recommendedNews, setRecommendedNews] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   const loadTokens = async () => {
@@ -459,6 +460,11 @@ export default function AgentDashboard() {
         const weatherRes = await getWeather().catch(() => null);
         if (weatherRes) setWeatherData(weatherRes);
         await loadTokens();
+
+        const newsRes = await getRecommendedNews().catch(() => null);
+        if (newsRes && newsRes.news) {
+          setRecommendedNews(newsRes.news);
+        }
       } catch (e) { console.error('Dashboard load error:', e); }
       setDataLoading(false);
     };
@@ -598,22 +604,35 @@ export default function AgentDashboard() {
               </div>
 
               <Card title="Tin Tức Đã Lọc" icon={Newspaper} className="flex-1 border-transparent shadow-md hover:shadow-lg transition-shadow">
-                <div className="space-y-5 pt-2">
-                  <div className="group border-b border-slate-100 pb-5 hover:border-indigo-100 transition-colors">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md uppercase tracking-wider">React FW</span>
-                      <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1"><RotateCw className="w-3 h-3" /> Cập nhật 10p trước</span>
+                <div className="space-y-4 pt-2 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
+                  {recommendedNews.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                      <Newspaper className="w-10 h-10 mb-2 opacity-50" />
+                      <p className="text-sm font-medium">Chưa có tin tức nào.</p>
+                      <p className="text-xs">Thiết lập nguồn tin ở Cài Đặt và đợi hệ thống cào dữ liệu.</p>
                     </div>
-                    <h4 className="text-base font-bold text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors">Vercel phát hành React 19 bản chính thức tích hợp React Compiler x3 tốc độ Render.</h4>
-                    <p className="text-sm text-slate-500 mt-2 leading-relaxed">Framework Frontend phổ biến nhất vừa đại tu toàn diện, xoá bỏ useMemo, useCallback thông qua cơ chế tự động biên dịch ở cấp độ AST.</p>
-                  </div>
-
-                  <div className="group border-b border-slate-100 pb-5 hover:border-indigo-100 transition-colors">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md uppercase tracking-wider">Backend</span>
-                    </div>
-                    <h4 className="text-base font-bold text-slate-800 leading-snug group-hover:text-emerald-600 transition-colors">Django 5.1 update Async ORM siêu tốc cùng gRPC.</h4>
-                  </div>
+                  ) : (
+                    recommendedNews.map((news, idx) => (
+                      <div key={idx} className="group border-b border-slate-100 pb-4 hover:border-indigo-100 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md uppercase tracking-wider">
+                            {news.metadata?.tag || 0}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {news.metadata?.published || news.metadata?.source}
+                          </span>
+                        </div>
+                        <a href={news.metadata?.url} target="_blank" rel="noopener noreferrer" className="block text-base font-bold text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors">
+                          {news.title}
+                        </a>
+                        {news.content && (
+                          <p className="text-sm text-slate-500 mt-2 leading-relaxed line-clamp-2">
+                            {news.content}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </Card>
             </div>
