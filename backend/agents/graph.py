@@ -44,6 +44,7 @@ async def general_chat_node(state: AgentState) -> dict:
 
     system_prompt = GENERAL_CHAT_PROMPT.format(
         user_context=state.get("user_context", "Chưa có thông tin"),
+        document_context=state.get("document_context", ""),
         chat_history=chat_history,
     )
 

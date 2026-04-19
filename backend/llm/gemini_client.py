@@ -75,7 +75,6 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=0.7,
             top_p=0.95,
-            max_output_tokens=max_output_tokens,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
@@ -109,7 +108,6 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=0.3,
             top_p=0.9,
-            max_output_tokens=8192,
             response_mime_type=response_mime_type,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
@@ -153,7 +151,6 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=0.7,
             top_p=0.95,
-            max_output_tokens=4096,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
@@ -184,7 +181,6 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=0.3,
             top_p=0.9,
-            max_output_tokens=8192,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:
@@ -218,7 +214,6 @@ class GeminiClient:
             tools=[google_search_tool],
             temperature=0.3,
             top_p=0.9,
-            max_output_tokens=8192,
             safety_settings=DEFAULT_SAFETY_SETTINGS,
         )
         if system_instruction:

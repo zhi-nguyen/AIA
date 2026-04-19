@@ -3,7 +3,7 @@ routes.py - REST API Endpoints
 Định nghĩa các endpoint cho frontend gọi
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Response, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Response, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from typing import Optional
@@ -70,6 +70,8 @@ class ChatRequest(BaseModel):
     """Request body cho chat endpoint"""
     message: str
     user_id: str = "default_user"
+    session_id: str = "default_session"
+    use_long_term_memory: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -115,7 +117,15 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
 
         from tasks import process_chat
         print(f"[API] Dispatching chat task for message: {request.message[:100]}")
-        task = process_chat.delay(user_id, request.message, doc_context, image_context, image_filename)
+        task = process_chat.delay(
+            user_id, 
+            request.message, 
+            doc_context, 
+            image_context, 
+            image_filename,
+            request.session_id,
+            request.use_long_term_memory
+        )
         
         return TaskResponse(task_id=task.id, status="processing")
 
@@ -128,7 +138,11 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
 # === Document Upload Endpoints ===
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
+async def upload_document(
+    file: UploadFile = File(...), 
+    session_id: str = Form("default_session"),
+    user_id: str = Depends(get_current_user_id)
+):
     """
     Upload và parse file document.
     Hỗ trợ: PDF, DOCX, DOC, CSV, XLSX, XLS.
@@ -154,9 +168,24 @@ async def upload_document(file: UploadFile = File(...), user_id: str = Depends(g
         # Parse file
         result = parse_file(filename, file_bytes)
 
-        # Lưu vào memory store
+        # Lưu vào memory store (cũ)
         _document_store[user_id] = result
         print(f"[API] Document uploaded: {filename} ({result['char_count']} chars) for user {user_id}")
+
+        # Thêm vào Session Memory (RAG Vector Store)
+        try:
+            from memory.vector_store import get_user_memory_store
+            store = get_user_memory_store()
+            
+            # Simple chunking by paragraph or fixed length
+            text_val = result["text"]
+            chunks = [text_val[i:i+4000] for i in range(0, len(text_val), 4000)]
+            meta_list = [{"user_id": user_id, "session_id": session_id, "memory_type": "session", "source": filename} for _ in chunks]
+            
+            store.add_documents(chunks, metadata_list=meta_list)
+            print(f"[API] Upload chunked into {len(chunks)} fragments and RAG-indexed to session memory.")
+        except Exception as e:
+            print(f"[API] Lỗi khi RAG document: {e}")
 
         return {
             "success": True,

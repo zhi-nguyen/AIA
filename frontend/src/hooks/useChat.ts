@@ -22,6 +22,9 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>(() => `sess-${Date.now()}`);
+  const [useLongTermMemory, setUseLongTermMemory] = useState<boolean>(false);
+  
   const idCounter = useRef(0);
   const ws = useRef<WebSocket | null>(null);
 
@@ -142,6 +145,8 @@ export function useChat() {
       try {
         const response = await sendMessage({
           message: content.trim(),
+          session_id: sessionId,
+          use_long_term_memory: useLongTermMemory
         });
 
         // Chỉ cập nhật taskId cho loadingMessage để WS matching
@@ -161,13 +166,17 @@ export function useChat() {
         setIsLoading(false);
       }
     },
-    [isLoading]
+    [isLoading, sessionId, useLongTermMemory]
   );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
     setError(null);
+    setSessionId(`sess-${Date.now()}`); // Create new session
   }, []);
 
-  return { messages, isLoading, error, send, clearMessages };
+  return { 
+    messages, isLoading, error, send, clearMessages, 
+    sessionId, useLongTermMemory, setUseLongTermMemory 
+  };
 }

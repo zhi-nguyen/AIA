@@ -26,23 +26,80 @@ def save_token_usage_task(user_id: str, period: str, tokens_in: int, tokens_out:
 
 # ── Chat task ──────────────────────────────────────────────────────────────
 @celery_app.task(bind=True, name="tasks.process_chat")
-def process_chat(self, user_id: str, message: str, doc_context: str, image_context: str, image_filename: str):
+def process_chat(
+    self, 
+    user_id: str, 
+    message: str, 
+    doc_context: str, 
+    image_context: str, 
+    image_filename: str,
+    session_id: str = "default_session",
+    use_long_term_memory: bool = False
+):
     from llm.gemini_client import current_user_id
+    from langchain_core.messages import HumanMessage, AIMessage
+    from memory.vector_store import get_user_memory_store
+    import redis
+    import json
+    from celery_app import redis_url
+    
     current_user_id.set(user_id)
+    r = redis.from_url(redis_url)
+    
     try:
         combined_context = doc_context
         if image_context:
             combined_context += f"\n\n[Ảnh đã upload: {image_filename}]\n{image_context}"
 
+        # 1. Khôi phục Short-term memory (tối đa 20 messages gần nhất của session_id)
+        short_term_key = f"chat:short_term:{session_id}"
+        raw_msgs = r.lrange(short_term_key, 0, 19)
+        history_messages = []
+        for raw in reversed(raw_msgs):
+            try:
+                msg_data = json.loads(raw)
+                if msg_data["role"] == "user":
+                    history_messages.append(HumanMessage(content=msg_data["content"]))
+                else:
+                    history_messages.append(AIMessage(content=msg_data["content"]))
+            except Exception:
+                pass
+                
+        # 2. Truy vấn Session Memory & Long-Term Memory (RAG Vector Store)
+        store = get_user_memory_store()
+        session_rag_context = ""
+        try:
+            session_nodes_text = store.query(message, top_k=3, filters={"session_id": session_id})
+            if session_nodes_text and session_nodes_text != "Empty Response":
+                session_rag_context = f"\n\n[KÍ ỨC PHIÊN CHAT HIỆN TẠI (Tài liệu/Nội dung cũ)]\n{session_nodes_text}"
+        except Exception as e:
+            print(f"[Memory] Lỗi RAG session memory: {e}")
+            
+        long_term_rag_context = ""
+        if use_long_term_memory:
+            try:
+                lt_nodes_text = store.query(message, top_k=3, filters={"user_id": user_id, "memory_type": "global"})
+                if lt_nodes_text and lt_nodes_text != "Empty Response":
+                    long_term_rag_context = f"\n\n[KÍ ỨC DÀI HẠN (Phiên cũ)]\n{lt_nodes_text}"
+            except Exception as e:
+                print(f"[Memory] Lỗi RAG long-term memory: {e}")
+                
+        final_doc_context = combined_context + session_rag_context + long_term_rag_context
+
+        # Gắn thêm tin nhắn hiện tại của user vào tail
+        current_msg = HumanMessage(content=message)
+        history_messages.append(current_msg)
+
         initial_state = {
-            "messages": [HumanMessage(content=message)],
+            "messages": history_messages,
             "user_id": user_id,
+            "session_id": session_id,
             "user_context": "",
             "route": "",
             "route_reasoning": "",
             "tool_results": "",
             "final_response": "",
-            "document_context": combined_context,
+            "document_context": final_doc_context,
             "error": "",
         }
 
@@ -50,18 +107,37 @@ def process_chat(self, user_id: str, message: str, doc_context: str, image_conte
         graph = get_compiled_graph()
         result = loop.run_until_complete(graph.ainvoke(initial_state))
 
+        ai_response_text = result.get("final_response", "Xin lỗi, tôi không thể xử lý yêu cầu này.") or "Xin lỗi, tôi không thể xử lý."
+        
+        # --- Lưu short_term memory ---
+        try:
+            # Lưu ý: lpush đẩy phần tử mới vào index 0. Ai mới nhất thì nằm ở đầu.
+            # Vậy trình tự: lpush user message -> sau đó lpush AI message.
+            r.lpush(short_term_key, json.dumps({"role": "user", "content": message}))
+            r.lpush(short_term_key, json.dumps({"role": "assistant", "content": ai_response_text}))
+            r.ltrim(short_term_key, 0, 19)
+            r.expire(short_term_key, 86400)
+        except Exception as cache_err:
+            print(f"[Memory] Short-term cache error: {cache_err}")
+            
+        # --- Lưu memory back vào LlamaIndex RAG ---
+        def safe_background_rag():
+            try:
+                meta = {"user_id": user_id, "session_id": session_id, "memory_type": "global"}
+                store.add_documents([f"User: {message}\nAI: {ai_response_text}"], [meta])
+            except Exception as e:
+                print(f"[Memory] Global RAG index error: {e}")
+                
+        loop.run_in_executor(None, safe_background_rag)
+
         response_payload = {
-            "response": result.get("final_response", "Xin lỗi, tôi không thể xử lý yêu cầu này.") or "Xin lỗi, tôi không thể xử lý.",
+            "response": ai_response_text,
             "route": result.get("route"),
             "route_reasoning": result.get("route_reasoning"),
         }
 
         # Publish result back via Redis PubSub
         try:
-            import redis
-            import json
-            from celery_app import redis_url
-            r = redis.from_url(redis_url)
             pub_data = {**response_payload, "user_id": user_id, "type": "chat_response", "task_id": self.request.id}
             r.publish("aia_ws_messages", json.dumps(pub_data))
         except Exception as redis_e:

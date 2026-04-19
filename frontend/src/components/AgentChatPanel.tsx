@@ -12,6 +12,9 @@ interface ChatState {
   error: string | null;
   send: (content: string) => void;
   clearMessages: () => void;
+  sessionId: string;
+  useLongTermMemory: boolean;
+  setUseLongTermMemory: (val: boolean) => void;
 }
 
 interface AgentChatPanelProps {
@@ -132,7 +135,7 @@ export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChat
         if (pendingFileType === "image") {
           await uploadImage(pendingFile);
         } else {
-          const result = await uploadFile(pendingFile);
+          const result = await uploadFile(pendingFile, chatState.sessionId);
           setAttachedDoc(result);
         }
 
@@ -195,9 +198,34 @@ export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChat
           <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-sm shadow-emerald-500/50"></span>
           Agent Chatbox
         </h2>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200" title="Nếu bật, AI sẽ dùng RAG để nhớ lại tất cả các phiên chat trước đây của bạn">
+              <input 
+                id="use-ltm-toggle"
+                type="checkbox" 
+                checked={chatState.useLongTermMemory}
+                onChange={(e) => chatState.setUseLongTermMemory(e.target.checked)}
+                className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="use-ltm-toggle" className="ml-2 text-xs font-medium text-slate-600 cursor-pointer">
+                Ký ức cũ
+              </label>
+            </div>
+            <button 
+              type="button" 
+              onClick={chatState.clearMessages} 
+              className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium rounded-lg transition-colors border border-indigo-100"
+              title="Xóa chat và tạo phiên mới"
+            >
+              Làm mới
+            </button>
+            <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
           <div className="flex items-center" title="Âm lượng đọc tự động (TTS)">
-            <Volume2 size={16} className="text-slate-400 mr-2" />
+            <Volume2 size={12} className="text-slate-400 mr-2" />
             <input 
               type="range" 
               min="0" 
@@ -205,12 +233,9 @@ export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChat
               step="0.1" 
               value={ttsVolume} 
               onChange={(e) => setTtsVolume(parseFloat(e.target.value))} 
-              className="w-16 accent-indigo-500 cursor-pointer"
+              className="w-20 h-1 accent-indigo-500 cursor-pointer"
             />
           </div>
-          <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors">
-            <X className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
