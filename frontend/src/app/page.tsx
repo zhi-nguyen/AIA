@@ -3,14 +3,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   getWeather, getProposals, getLinkedAccounts, deleteLinkedAccount,
-  getGoogleAuthUrl, initSession, type LinkedAccount
+  getGoogleAuthUrl, initSession, getUserProfile, createUserProfile, getTokenUsage, getRecommendedNews, type LinkedAccount
 } from '@/lib/api';
 import MailPanel from '@/components/MailPanel';
 import AgentChatPanel from '@/components/AgentChatPanel';
+import CalendarSidebar from '@/components/CalendarSidebar';
+import ProposalSidebar from '@/components/ProposalSidebar';
+import { useChat } from '@/hooks/useChat';
+import { useProposals } from '@/hooks/useProposals';
 import {
   Settings, Mail, Calendar, Cloud, Newspaper,
   Bell, Lightbulb, MessageSquare, Plus, X,
-  ToggleRight, ToggleLeft, Send, CheckCircle2, User, LayoutGrid, RotateCw, Hash, Link2, ExternalLink, Globe, MapPin, Save
+  ToggleRight, ToggleLeft, Send, CheckCircle2, User, LayoutGrid, RotateCw, Hash, Link2, ExternalLink, Globe, MapPin, Save, Zap, Activity, Cpu, TrendingUp, Clock
 } from 'lucide-react';
 
 // --- THÀNH PHẦN UI CƠ BẢN ---
@@ -47,19 +51,55 @@ const ConfigPanel = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void
     suggestWork: true,
     suggestLife: true
   });
-  const [interestTags, setInterestTags] = useState<string[]>(['Công nghệ', 'React.js', 'Python', 'AI / LLM']);
+  const [interestTags, setInterestTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
-  const [savedUrls, setSavedUrls] = useState<string[]>(['https://news.ycombinator.com', 'https://dev.to']);
-  const [userAddress, setUserAddress] = useState('Biên Hoà, Đồng Nai');
+  const [savedUrls, setSavedUrls] = useState<string[]>([]);
+  const [userAddress, setUserAddress] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isProfileLoaded, setIsProfileLoaded] = useState(false);
 
-  const handleSaveConfig = () => {
+  const loadProfile = useCallback(async () => {
+    try {
+      const resp = await getUserProfile();
+      const profile = resp.profile;
+      if (profile) {
+        setInterestTags(profile.interests || []);
+        setSavedUrls(profile.preferred_news_sources || []);
+        setUserAddress(profile.address || '');
+        if (profile.work_style) {
+          try {
+            setSettings(JSON.parse(profile.work_style));
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load profile', e);
+    }
+    setIsProfileLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen && !isProfileLoaded) loadProfile();
+  }, [isOpen, isProfileLoaded, loadProfile]);
+
+  const handleSaveConfig = async () => {
     setIsSaving(true);
-    // Simulate save
-    setTimeout(() => {
+    try {
+      await createUserProfile({
+        name: "User", // Can be extended with a real name input later
+        occupation: "",
+        interests: interestTags,
+        preferred_news_sources: savedUrls,
+        work_style: JSON.stringify(settings),
+        address: userAddress,
+      });
+      alert("Đã lưu thông tin cấu hình");
+    } catch (e) {
+      console.error('Failed to save profile', e);
+      alert("Lỗi khi lưu cấu hình");
+    } finally {
       setIsSaving(false);
-      // Optional: show a toast or success feedback
-    }, 800);
+    }
   };
 
   // --- Real API: Tài khoản email ---
@@ -386,39 +426,57 @@ const ConfigPanel = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void
   );
 };
 
-
 // --- APP MAIN COMPONENT ---
 export default function AgentDashboard() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const { proposals, approveProposal, dismissProposal } = useProposals();
+  const [activePanel, setActivePanel] = useState<'none' | 'notif' | 'email' | 'chat' | 'calendar'>('none');
 
-  // Trạng thái các Panel trượt (Sidebar Con)
-  const [activePanel, setActivePanel] = useState<'none' | 'chat' | 'notif' | 'email'>('none');
+  // Chat state - lifted to page level so WebSocket persists
+  const chatState = useChat();
 
-  const togglePanel = (panel: 'chat' | 'notif' | 'email') => {
+  const togglePanel = (panel: 'chat' | 'notif' | 'email' | 'calendar') => {
     setActivePanel(prev => prev === panel ? 'none' : panel);
   }
 
   // === REAL API DATA ===
   const [weatherData, setWeatherData] = useState<any>(null);
-  const [proposals, setProposals] = useState<any[]>([]);
+  const [tokenUsage, setTokenUsage] = useState({ in: 0, out: 0 });
+  const [recommendedNews, setRecommendedNews] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+
+  const loadTokens = async () => {
+    try {
+      const tokenRes = await getTokenUsage().catch(() => null);
+      if (tokenRes) setTokenUsage({ in: tokenRes.tokens_in || 0, out: tokenRes.tokens_out || 0 });
+    } catch {}
+  };
 
   useEffect(() => {
     const loadDashboard = async () => {
       setDataLoading(true);
       try {
         await initSession();
-        const [weatherRes, proposalsRes] = await Promise.allSettled([
-          getWeather(),
-          getProposals(),
-        ]);
-        if (weatherRes.status === 'fulfilled') setWeatherData(weatherRes.value);
-        if (proposalsRes.status === 'fulfilled') setProposals(proposalsRes.value?.proposals || []);
+        const weatherRes = await getWeather().catch(() => null);
+        if (weatherRes) setWeatherData(weatherRes);
+        await loadTokens();
+
+        const newsRes = await getRecommendedNews().catch(() => null);
+        if (newsRes && newsRes.news) {
+          setRecommendedNews(newsRes.news);
+        }
       } catch (e) { console.error('Dashboard load error:', e); }
       setDataLoading(false);
     };
     loadDashboard();
   }, []);
+
+  // Gọi api cập nhật token khi chat hoàn thành (khi loading chuyển từ true về false)
+  useEffect(() => {
+    if (!chatState.isLoading) {
+      loadTokens();
+    }
+  }, [chatState.isLoading]);
 
   // Helper: parse weather
   const weatherTemp = weatherData?.weather?.data?.current?.temp_c;
@@ -429,6 +487,17 @@ export default function AgentDashboard() {
   const now = new Date();
   const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
   const monthNames = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
+  // format tokens
+  const formatToken = (num: number) => {
+    if (num >= 1000000) return { val: (num / 1000000).toFixed(2), suffix: 'M' };
+    if (num >= 1000) return { val: (num / 1000).toFixed(1), suffix: 'K' };
+    return { val: num.toString(), suffix: '' };
+  };
+  const numTokenIn = formatToken(tokenUsage.in);
+  const numTokenOut = formatToken(tokenUsage.out);
+  const tokenLimit = 2000000;
+  const tokenPercent = Math.min(Math.round(((tokenUsage.in + tokenUsage.out) / tokenLimit) * 100), 100);
 
   return (
     <div className="h-screen w-[1200px] flex bg-[#f8fafc] font-sans text-slate-800 overflow-hidden relative">
@@ -453,7 +522,7 @@ export default function AgentDashboard() {
               title="Thông báo hệ thống"
             >
               <Bell className="w-6 h-6" />
-              <span className="absolute top-2 right-2.5 w-2.5 h-2.5 bg-pink-500 border-[2px] border-[#1e1e2d] rounded-full"></span>
+              {proposals.length > 0 && <span className="absolute top-2 right-2.5 w-3 h-3 bg-pink-500 border-[2px] border-[#1e1e2d] rounded-full text-[0px]"></span>}
             </button>
 
             <button
@@ -462,7 +531,14 @@ export default function AgentDashboard() {
               title="Quản lý Hộp thư"
             >
               <Mail className="w-6 h-6" />
-              <span className="absolute top-2 right-2 w-4 h-4 bg-indigo-500 border-[2px] border-[#1e1e2d] text-[9px] font-bold text-white flex items-center justify-center rounded-full">4</span>
+            </button>
+
+            <button
+              onClick={() => togglePanel('calendar')}
+              className={`relative w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 ${activePanel === 'calendar' ? "bg-white text-[#1e1e2d] shadow-lg" : "text-slate-400 hover:bg-slate-700/50 hover:text-white"}`}
+              title="Lịch hẹn"
+            >
+              <Calendar className="w-6 h-6" />
             </button>
 
             <button
@@ -528,67 +604,81 @@ export default function AgentDashboard() {
               </div>
 
               <Card title="Tin Tức Đã Lọc" icon={Newspaper} className="flex-1 border-transparent shadow-md hover:shadow-lg transition-shadow">
-                <div className="space-y-5 pt-2">
-                  <div className="group border-b border-slate-100 pb-5 hover:border-indigo-100 transition-colors">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md uppercase tracking-wider">React FW</span>
-                      <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1"><RotateCw className="w-3 h-3" /> Cập nhật 10p trước</span>
+                <div className="space-y-4 pt-2 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
+                  {recommendedNews.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                      <Newspaper className="w-10 h-10 mb-2 opacity-50" />
+                      <p className="text-sm font-medium">Chưa có tin tức nào.</p>
+                      <p className="text-xs">Thiết lập nguồn tin ở Cài Đặt và đợi hệ thống cào dữ liệu.</p>
                     </div>
-                    <h4 className="text-base font-bold text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors">Vercel phát hành React 19 bản chính thức tích hợp React Compiler x3 tốc độ Render.</h4>
-                    <p className="text-sm text-slate-500 mt-2 leading-relaxed">Framework Frontend phổ biến nhất vừa đại tu toàn diện, xoá bỏ useMemo, useCallback thông qua cơ chế tự động biên dịch ở cấp độ AST.</p>
-                  </div>
-
-                  <div className="group border-b border-slate-100 pb-5 hover:border-indigo-100 transition-colors">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md uppercase tracking-wider">Backend</span>
-                    </div>
-                    <h4 className="text-base font-bold text-slate-800 leading-snug group-hover:text-emerald-600 transition-colors">Django 5.1 update Async ORM siêu tốc cùng gRPC.</h4>
-                  </div>
+                  ) : (
+                    recommendedNews.map((news, idx) => (
+                      <div key={idx} className="group border-b border-slate-100 pb-4 hover:border-indigo-100 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md uppercase tracking-wider">
+                            {news.metadata?.tag || 0}
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {news.metadata?.published || news.metadata?.source}
+                          </span>
+                        </div>
+                        <a href={news.metadata?.url} target="_blank" rel="noopener noreferrer" className="block text-base font-bold text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors">
+                          {news.title}
+                        </a>
+                        {news.content && (
+                          <p className="text-sm text-slate-500 mt-2 leading-relaxed line-clamp-2">
+                            {news.content}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </Card>
             </div>
 
             {/* Cột Phải (Hành Động Khẩn & Gợi Ý) - 5 cột */}
             <div className="col-span-5 flex flex-col h-full">
-              <Card title="Đề xuất" icon={Lightbulb} className="h-full border-none shadow-xl bg-gradient-to-b from-[#1e1e2d] to-[#11111a] p-0">
-                <div className="flex flex-col gap-4 h-full p-6 text-white pb-8">
-                  <div className="mb-2">
-                    <p className="text-sm font-semibold text-indigo-300">Nex AI dự báo & lên kế hoạch</p>
-                    <h2 className="text-2xl font-black mt-1">Hôm nay nên làm gì?</h2>
+              <Card title="Token Usage & Analytics" icon={Cpu} className="h-full border-none shadow-xl bg-gradient-to-b from-[#1e1e2d] to-[#11111a] p-0">
+                <div className="flex flex-col h-full p-6 text-white">
+                  <div className="mb-6">
+                    <p className="text-sm font-semibold text-emerald-400 flex items-center gap-2"><Activity className="w-4 h-4"/> Hệ thống đang phân bổ tài nguyên hiệu quả</p>
+                    <h2 className="text-2xl font-black mt-1">Lưu lượng LLM (Tháng {now.getMonth() + 1})</h2>
                   </div>
 
-                  {proposals.length > 0 ? proposals.slice(0, 4).map((p: any) => (
-                    <div key={p.id} className="flex items-start gap-4 bg-white/5 p-4 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center shrink-0">
-                        <CheckCircle2 className="w-5 h-5 text-pink-400" />
+                  {/* Token Stats */}
+                  <div className="grid grid-cols-2 gap-4 mb-8">
+                    <div className="bg-white/5 rounded-2xl p-4 border border-white/10 hover:bg-white/10 transition-colors">
+                      <div className="flex items-center gap-2 mb-2 text-indigo-300">
+                        <TrendingUp className="w-5 h-5"/>
+                        <span className="text-xs font-bold uppercase tracking-wider">Token In</span>
                       </div>
-                      <div>
-                        <p className="text-[15px] font-bold text-white mb-1">{p.payload?.subject || 'Đề xuất'}</p>
-                        <p className="text-sm text-slate-300 leading-relaxed line-clamp-2">{p.payload?.body?.slice(0, 120) || 'Nhấn để xem chi tiết.'}</p>
-                        <button className="mt-3 px-4 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold hover:bg-pink-600 transition-colors shadow-lg shadow-pink-500/30">Xem & Duyệt</button>
-                      </div>
+                      <div className="text-3xl font-black">{numTokenIn.val}<span className="text-sm font-bold text-slate-400 ml-1">{numTokenIn.suffix}</span></div>
+                      <p className="text-[11px] text-slate-400 mt-1">Tác vụ thu thập & tóm tắt</p>
                     </div>
-                  )) : (
-                    <>
-                      <div className="flex items-start gap-4 bg-white/5 p-4 rounded-2xl border border-white/10">
-                        <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                        </div>
-                        <div>
-                          <p className="text-[15px] font-bold text-white mb-1">Mọi thứ ổn!</p>
-                          <p className="text-sm text-slate-400 leading-relaxed">Hiện không có đề xuất khẩn nào. Agent sẽ thông báo khi phát hiện việc cần làm.</p>
-                        </div>
-                      </div>
-                    </>
-                  )}
 
-                  <div className="mt-auto pt-4 relative">
-                    <div className="absolute -top-6 left-0 right-0 h-4 bg-gradient-to-t from-[#11111a] to-transparent pointer-events-none"></div>
-                    {proposals.length > 0 && (
-                      <button className="w-full bg-white text-[#1e1e2d] font-bold py-3.5 rounded-2xl hover:bg-indigo-50 transition-transform active:scale-95 shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center gap-2">
-                        Chấp thuận toàn bộ <CheckCircle2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <div className="bg-white/5 rounded-2xl p-4 border border-white/10 hover:bg-white/10 transition-colors">
+                      <div className="flex items-center gap-2 mb-2 text-emerald-300">
+                        <Zap className="w-5 h-5"/>
+                        <span className="text-xs font-bold uppercase tracking-wider">Token Out</span>
+                      </div>
+                      <div className="text-3xl font-black">{numTokenOut.val}<span className="text-sm font-bold text-slate-400 ml-1">{numTokenOut.suffix}</span></div>
+                      <p className="text-[11px] text-slate-400 mt-1">Suy luận & Phản hồi</p>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar Limit */}
+                  <div className="mb-6 bg-white/5 rounded-2xl p-5 border border-white/10">
+                    <div className="flex justify-between items-end mb-3">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-200">Giới hạn trong ngày ({formatToken(tokenLimit).val}{formatToken(tokenLimit).suffix})</h4>
+                        <p className="text-xs text-slate-400 mt-1">Đã dùng {tokenPercent}% dung lượng</p>
+                      </div>
+                      <div className="text-xl font-black text-white">{tokenPercent}<span className="text-sm text-slate-400">%</span></div>
+                    </div>
+                    <div className="w-full bg-slate-800/50 rounded-full h-2 border border-white/10 overflow-hidden">
+                      <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full" style={{ width: `${tokenPercent}%` }}></div>
+                    </div>
                   </div>
                 </div>
               </Card>
@@ -600,52 +690,58 @@ export default function AgentDashboard() {
           ======== CÁC PANEL MỞ RỘNG (SLIDE-OVERS TỪ PHẢI) ======== 
         */}
 
-        {/* 1. NOTIFICATION PANEL */}
-        <div className={`absolute top-0 right-0 h-full w-[380px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col transition-transform duration-300 ease-in-out ${activePanel === 'notif' ? "translate-x-0" : "translate-x-full"}`}>
-          <div className="flex justify-between items-center bg-slate-50 border-b border-slate-100 p-5 shrink-0">
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
-              <Bell className="w-5 h-5 text-pink-500" /> Hệ thống cảnh báo
-            </h2>
-            <button onClick={() => setActivePanel('none')} className="p-2 bg-white text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            <div className="p-4 bg-red-50 border border-red-100 rounded-2xl">
-              <p className="text-sm font-bold text-red-700">Deadline báo cáo tháng QA</p>
-              <p className="text-xs text-red-600/80 mt-1">Còn 2 giờ nữa</p>
-            </div>
-            <div className="p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
-              <p className="text-sm font-bold text-slate-800">Cập nhật Windows ngầm</p>
-              <p className="text-xs text-slate-500 mt-1">Đã hoàn tất lúc sáng nay</p>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. EMAIL PANEL */}
-        <MailPanel isOpen={activePanel === 'email'} onClose={() => setActivePanel('none')} />
-
-        {/* 3. CHAT MÁY HỌC PANEL */}
-        <AgentChatPanel isOpen={activePanel === 'chat'} onClose={() => setActivePanel('none')} />
-
         {/* Nền làm mờ nội dung phía sau nếu có Panel nào đó đang mở */}
         {activePanel !== 'none' && (
           <div
             onClick={() => setActivePanel('none')}
-            className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px] z-20 cursor-pointer animate-in fade-in duration-200"
+            className="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px] z-20 cursor-pointer"
           />
+        )}
+
+        {/* 1. NOTIFICATION / PROPOSAL PANEL */}
+        {activePanel === 'notif' && (
+          <ProposalSidebar
+            isOpen={true}
+            onClose={() => setActivePanel('none')}
+            proposals={proposals}
+            onApprove={approveProposal}
+            onDismiss={dismissProposal}
+          />
+        )}
+
+        {/* 2. EMAIL PANEL */}
+        {activePanel === 'email' && (
+          <MailPanel isOpen={true} onClose={() => setActivePanel('none')} />
+        )}
+
+        {/* 3. CALENDAR PANEL */}
+        {activePanel === 'calendar' && (
+          <CalendarSidebar isOpen={true} onClose={() => setActivePanel('none')} />
+        )}
+
+        {/* 4. CHAT MÁY HỌC PANEL */}
+        {activePanel === 'chat' && (
+          <AgentChatPanel isOpen={true} onClose={() => setActivePanel('none')} chatState={chatState} />
         )}
       </div>
 
       <ConfigPanel isOpen={isConfigOpen} onClose={() => setIsConfigOpen(false)} />
 
-      {/* Global CSS scrollbar */}
+      {/* Global CSS */}
       <style dangerouslySetInnerHTML={{
         __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+
+        @keyframes slideInRight {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        .panel-slide-in {
+          animation: slideInRight 0.3s ease-out forwards;
+        }
       `}} />
     </div>
   );

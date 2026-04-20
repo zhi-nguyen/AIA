@@ -156,11 +156,23 @@ async def process_email_intent(user_id: str, email_data: dict) -> dict | None:
         result["email_subject"] = email_data.get("subject", "")
         result["email_from"] = email_data.get("from", "")
 
+        try:
+            confidence_val = float(result.get("confidence", 0))
+        except (ValueError, TypeError):
+            confidence_val = 0.0
+
         print(
             f"[EmailAgent][Secretary] gmail_id={result['gmail_id']} | "
             f"is_invitation={result.get('is_invitation')} | "
-            f"confidence={result.get('confidence', 0):.2f}"
+            f"confidence={confidence_val:.2f}"
         )
+
+        # BỘ LỌC TIER 2: Tự động bỏ qua nếu AI chấm % khớp (confidence) dưới 0.5
+        if confidence_val < 0.5:
+            print(f"[EmailAgent][Secretary] Bỏ qua (Tier 2 Filter): % khớp {confidence_val:.2f} < 0.5")
+            # Đánh dấu email đã xử lý để không quét lại
+            await add_processed_email(user_id, email_data.get("id", ""))
+            return None
 
         # Lưu Proposal vào Database để đồng bộ lâu dài
         if result.get("is_invitation") or result.get("suggested_actions"):

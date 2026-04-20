@@ -128,6 +128,17 @@ async def init_db_tables(pool: asyncpg.Pool):
             );
         """)
 
+        # Bảng lưu số liệu Token
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                period VARCHAR(7) NOT NULL,
+                tokens_in BIGINT DEFAULT 0,
+                tokens_out BIGINT DEFAULT 0,
+                PRIMARY KEY (user_id, period)
+            );
+        """)
+
         # Migration: copy dữ liệu từ bảng users cũ sang user_accounts (1 lần)
         await conn.execute("""
             INSERT INTO user_accounts (user_id, google_id, email, encrypted_access_token, encrypted_refresh_token, is_primary)
@@ -791,3 +802,38 @@ async def get_weather_data_for_location(province: str, max_age_hours: int = 2) -
             data = row["data"]
             return json.loads(data) if isinstance(data, str) else data
         return None
+
+async def get_token_usage(user_id: str, period: str) -> dict:
+    """
+    Lấy số liệu token của user trong 1 chu kỳ (YYYY-MM).
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT tokens_in, tokens_out 
+            FROM token_usage
+            WHERE user_id = $1::uuid AND period = $2
+            """,
+            user_id, period
+        )
+        if row:
+            return {"tokens_in": row["tokens_in"], "tokens_out": row["tokens_out"]}
+        return {"tokens_in": 0, "tokens_out": 0}
+
+async def add_token_usage(user_id: str, period: str, tokens_in: int, tokens_out: int) -> None:
+    """
+    Cộng dồn số lượng token_in và token_out cho một User trong kỳ (YYYY-MM).
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO token_usage (user_id, period, tokens_in, tokens_out)
+            VALUES ($1::uuid, $2, $3, $4)
+            ON CONFLICT (user_id, period) DO UPDATE 
+            SET tokens_in = token_usage.tokens_in + EXCLUDED.tokens_in,
+                tokens_out = token_usage.tokens_out + EXCLUDED.tokens_out
+            """,
+            user_id, period, tokens_in, tokens_out
+        )

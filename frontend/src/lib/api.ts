@@ -19,7 +19,9 @@ export async function initSession(): Promise<{ status: string; user_id: string; 
 
 export interface ChatRequest {
   message: string;
-  user_id?: string;
+  user_id?: string;
+  session_id?: string;
+  use_long_term_memory?: boolean;
 }
 
 export interface ChatResponse {
@@ -226,9 +228,10 @@ export interface DocumentStatus {
 /**
  * Upload file document (PDF, DOCX, CSV, XLSX...)
  */
-export async function uploadFile(file: File): Promise<UploadResult> {
+export async function uploadFile(file: File, sessionId: string = "default_session"): Promise<UploadResult> {
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("file", file);
+  formData.append("session_id", sessionId);
 
   const res = await fetchWithAuth(`${API_BASE_URL}/upload`, {
     method: "POST",
@@ -583,5 +586,29 @@ export async function replyToEmail(
     body: JSON.stringify({ body, account_email: accountEmail || "" }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Lấy lịch sử sử dụng Token
+ */
+export async function getTokenUsage(): Promise<{ status: string; period: string; tokens_in: number; tokens_out: number }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/user/tokens`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch token usage" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Lấy danh sách tin tức đề xuất từ Vertex Store
+ */
+export async function getRecommendedNews(): Promise<{ status: string; news: any[] }> {
+  const res = await fetchWithAuth(`${API_BASE_URL}/user/news`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to fetch news" }));
+    throw new Error(error.detail || `HTTP ${res.status}`);
+  }
   return res.json();
 }

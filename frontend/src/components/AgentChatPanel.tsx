@@ -1,14 +1,26 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { useChat } from "@/hooks/useChat";
 import { useVoice } from "@/hooks/useVoice";
 import { uploadFile, uploadImage, clearDocument, type UploadResult } from "@/lib/api";
 import { X, Send, Bot, Mail, Newspaper, FileText, Paperclip, Mic, Square, Hourglass, User, Volume2 } from "lucide-react";
+import type { Message } from "@/hooks/useChat";
+
+interface ChatState {
+  messages: Message[];
+  isLoading: boolean;
+  error: string | null;
+  send: (content: string) => void;
+  clearMessages: () => void;
+  sessionId: string;
+  useLongTermMemory: boolean;
+  setUseLongTermMemory: (val: boolean) => void;
+}
 
 interface AgentChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  chatState: ChatState;
 }
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -28,8 +40,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps) {
-  const { messages, isLoading, error, send, clearMessages } = useChat();
+export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChatPanelProps) {
+  const { messages, isLoading, error, send, clearMessages } = chatState;
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   
   const [input, setInput] = useState("");
@@ -123,7 +135,7 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
         if (pendingFileType === "image") {
           await uploadImage(pendingFile);
         } else {
-          const result = await uploadFile(pendingFile);
+          const result = await uploadFile(pendingFile, chatState.sessionId);
           setAttachedDoc(result);
         }
 
@@ -179,16 +191,41 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
   const canSend = (input.trim().length > 0 || pendingFile !== null) && !isLoading && !isUploading;
 
   return (
-    <div className={`absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
+    <div className="absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in">
       {/* Header */}
       <div className="flex justify-between items-center bg-white border-b border-slate-100 p-5 shrink-0 shadow-sm z-10 relative">
         <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
           <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-sm shadow-emerald-500/50"></span>
           Agent Chatbox
         </h2>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200" title="Nếu bật, AI sẽ dùng RAG để nhớ lại tất cả các phiên chat trước đây của bạn">
+              <input 
+                id="use-ltm-toggle"
+                type="checkbox" 
+                checked={chatState.useLongTermMemory}
+                onChange={(e) => chatState.setUseLongTermMemory(e.target.checked)}
+                className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="use-ltm-toggle" className="ml-2 text-xs font-medium text-slate-600 cursor-pointer">
+                Ký ức cũ
+              </label>
+            </div>
+            <button 
+              type="button" 
+              onClick={chatState.clearMessages} 
+              className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium rounded-lg transition-colors border border-indigo-100"
+              title="Xóa chat và tạo phiên mới"
+            >
+              Làm mới
+            </button>
+            <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
           <div className="flex items-center" title="Âm lượng đọc tự động (TTS)">
-            <Volume2 size={16} className="text-slate-400 mr-2" />
+            <Volume2 size={12} className="text-slate-400 mr-2" />
             <input 
               type="range" 
               min="0" 
@@ -196,12 +233,9 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
               step="0.1" 
               value={ttsVolume} 
               onChange={(e) => setTtsVolume(parseFloat(e.target.value))} 
-              className="w-16 accent-indigo-500 cursor-pointer"
+              className="w-20 h-1 accent-indigo-500 cursor-pointer"
             />
           </div>
-          <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors">
-            <X className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
@@ -249,7 +283,7 @@ export default function AgentChatPanel({ isOpen, onClose }: AgentChatPanelProps)
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.filter(msg => !msg.isLoading).map((msg) => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-md ${msg.role === 'user' ? 'bg-indigo-500 shadow-indigo-500/30 border border-indigo-400' : 'bg-slate-800'}`}>
               {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-white" />}

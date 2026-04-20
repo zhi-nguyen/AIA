@@ -14,23 +14,92 @@ def get_or_create_eventloop():
         return loop
 
 
+# ── System tasks ──────────────────────────────────────────────────────────────
+@celery_app.task(name="tasks.save_token_usage_task", ignore_result=True)
+def save_token_usage_task(user_id: str, period: str, tokens_in: int, tokens_out: int):
+    try:
+        from services.db_service import add_token_usage
+        loop = get_or_create_eventloop()
+        loop.run_until_complete(add_token_usage(user_id, period, tokens_in, tokens_out))
+    except Exception as e:
+        print(f"[Tokens] Task record error: {e}")
+
 # ── Chat task ──────────────────────────────────────────────────────────────
 @celery_app.task(bind=True, name="tasks.process_chat")
-def process_chat(self, user_id: str, message: str, doc_context: str, image_context: str, image_filename: str):
+def process_chat(
+    self, 
+    user_id: str, 
+    message: str, 
+    doc_context: str, 
+    image_context: str, 
+    image_filename: str,
+    session_id: str = "default_session",
+    use_long_term_memory: bool = False
+):
+    from llm.gemini_client import current_user_id
+    from langchain_core.messages import HumanMessage, AIMessage
+    from memory.vector_store import get_user_memory_store
+    import redis
+    import json
+    from celery_app import redis_url
+    
+    current_user_id.set(user_id)
+    r = redis.from_url(redis_url)
+    
     try:
         combined_context = doc_context
         if image_context:
             combined_context += f"\n\n[Ảnh đã upload: {image_filename}]\n{image_context}"
 
+        # 1. Khôi phục Short-term memory (tối đa 20 messages gần nhất của session_id)
+        short_term_key = f"chat:short_term:{session_id}"
+        raw_msgs = r.lrange(short_term_key, 0, 19)
+        history_messages = []
+        for raw in reversed(raw_msgs):
+            try:
+                msg_data = json.loads(raw)
+                if msg_data["role"] == "user":
+                    history_messages.append(HumanMessage(content=msg_data["content"]))
+                else:
+                    history_messages.append(AIMessage(content=msg_data["content"]))
+            except Exception:
+                pass
+                
+        # 2. Truy vấn Session Memory & Long-Term Memory (RAG Vector Store)
+        store = get_user_memory_store()
+        session_rag_context = ""
+        try:
+            session_nodes_text = store.query(message, top_k=3, filters={"session_id": session_id})
+            if session_nodes_text and session_nodes_text != "Empty Response":
+                session_rag_context = f"\n\n[KÍ ỨC PHIÊN CHAT HIỆN TẠI (Tài liệu/Nội dung cũ)]\n{session_nodes_text}"
+        except Exception as e:
+            print(f"[Memory] Lỗi RAG session memory: {e}")
+            
+        long_term_rag_context = ""
+        if use_long_term_memory:
+            try:
+                lt_nodes_text = store.query(message, top_k=3, filters={"user_id": user_id, "memory_type": "global"})
+                if lt_nodes_text and lt_nodes_text != "Empty Response":
+                    long_term_rag_context = f"\n\n[KÍ ỨC DÀI HẠN (Phiên cũ)]\n{lt_nodes_text}"
+            except Exception as e:
+                print(f"[Memory] Lỗi RAG long-term memory: {e}")
+                
+        final_doc_context = combined_context + session_rag_context + long_term_rag_context
+
+        # Gắn thêm tin nhắn hiện tại của user vào tail
+        current_msg = HumanMessage(content=message)
+        history_messages.append(current_msg)
+
         initial_state = {
-            "messages": [HumanMessage(content=message)],
+            "messages": history_messages,
             "user_id": user_id,
+            "session_id": session_id,
             "user_context": "",
             "route": "",
             "route_reasoning": "",
             "tool_results": "",
             "final_response": "",
-            "document_context": combined_context,
+            "document_context": final_doc_context,
             "error": "",
         }
 
@@ -38,18 +107,37 @@ def process_chat(self, user_id: str, message: str, doc_context: str, image_conte
         graph = get_compiled_graph()
         result = loop.run_until_complete(graph.ainvoke(initial_state))
 
+        ai_response_text = result.get("final_response", "Xin lỗi, tôi không thể xử lý yêu cầu này.") or "Xin lỗi, tôi không thể xử lý."
+        
+        # --- Lưu short_term memory ---
+        try:
+            # Lưu ý: lpush đẩy phần tử mới vào index 0. Ai mới nhất thì nằm ở đầu.
+            # Vậy trình tự: lpush user message -> sau đó lpush AI message.
+            r.lpush(short_term_key, json.dumps({"role": "user", "content": message}))
+            r.lpush(short_term_key, json.dumps({"role": "assistant", "content": ai_response_text}))
+            r.ltrim(short_term_key, 0, 19)
+            r.expire(short_term_key, 86400)
+        except Exception as cache_err:
+            print(f"[Memory] Short-term cache error: {cache_err}")
+            
+        # --- Lưu memory back vào LlamaIndex RAG ---
+        def safe_background_rag():
+            try:
+                meta = {"user_id": user_id, "session_id": session_id, "memory_type": "global"}
+                store.add_documents([f"User: {message}\nAI: {ai_response_text}"], [meta])
+            except Exception as e:
+                print(f"[Memory] Global RAG index error: {e}")
+                
+        loop.run_in_executor(None, safe_background_rag)
+
         response_payload = {
-            "response": result.get("final_response", "Xin lỗi, tôi không thể xử lý yêu cầu này.") or "Xin lỗi, tôi không thể xử lý.",
+            "response": ai_response_text,
             "route": result.get("route"),
             "route_reasoning": result.get("route_reasoning"),
         }
 
         # Publish result back via Redis PubSub
         try:
-            import redis
-            import json
-            from celery_app import redis_url
-            r = redis.from_url(redis_url)
             pub_data = {**response_payload, "user_id": user_id, "type": "chat_response", "task_id": self.request.id}
             r.publish("aia_ws_messages", json.dumps(pub_data))
         except Exception as redis_e:
@@ -122,6 +210,9 @@ def process_user_emails(self, user_id: str):
     """
     import asyncio
     import traceback
+    from llm.gemini_client import current_user_id
+
+    current_user_id.set(user_id)
 
     async def _run():
         from tools.email_tools import fetch_unread_emails, check_gmail_authorized
@@ -388,3 +479,89 @@ def check_weather_before_event(self, event_id: str, user_id: str):
     except Exception:
         traceback.print_exc()
 
+# ── News Scraping Task ────────────────────────────────────────────────────────
+@celery_app.task(bind=True, name="tasks.fetch_and_index_news_task")
+def fetch_and_index_news_task(self):
+    """
+    Quét tin tức theo cấu hình của người dùng. Tải và đẩy lên Vertex Store.
+    """
+    import asyncio
+    import traceback
+    import hashlib
+
+    async def _run():
+        from services.db_service import get_db_pool
+        from memory.user_context import get_user_profile
+        from tools.news_tools import fetch_rss_news, search_google_news, push_to_vertex_search
+
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # Thu thập toàn bộ danh sách user (Mockup: query sessions hoặc events proxy user_id)
+            rows = await conn.fetch("SELECT user_id::text FROM user_sessions")
+            user_ids = list(set([row["user_id"] for row in rows if row["user_id"]]))
+            if "default_user" not in user_ids:
+                user_ids.append("default_user")
+
+        processed_urls = set()
+        total_pushed = 0
+
+        for uid in user_ids:
+            profile = await get_user_profile(uid)
+            if not profile: continue
+            
+            interests = profile.interests or []
+            urls = profile.preferred_news_sources or []
+            if not interests and not urls:
+                continue
+                
+            articles = []
+            
+            # 1. Fetch bằng URLs Custom (dùng rss fallback)
+            for url in urls:
+                try:
+                    res = fetch_rss_news(url, source_name="Feed", limit=5)
+                    for a in res:
+                        if a["url"] not in processed_urls:
+                            a["tag"] = "Nguồn yêu thích"
+                            articles.append(a)
+                            processed_urls.add(a["url"])
+                except Exception as e:
+                    print(f"[NewsTask] URL {url} err: {e}")
+                    
+            # 2. Ngôn từ sở thích (Google News)
+            for tag in interests:
+                try:
+                    res = search_google_news(tag, limit=3, lang="vi")
+                    for a in res:
+                        if a["url"] not in processed_urls:
+                            a["tag"] = tag
+                            articles.append(a)
+                            processed_urls.add(a["url"])
+                except Exception as e:
+                    print(f"[NewsTask] Interest {tag} err: {e}")
+
+            # Push vào Vertex Search
+            for a in articles:
+                doc_id = hashlib.md5(a["url"].encode()).hexdigest()
+                doc = {
+                    "id": doc_id,
+                    "title": a["title"],
+                    "content": a.get("summary", "") or a["title"],
+                    "metadata": {
+                        "source": a["source"],
+                        "url": a["url"],
+                        "published": a.get("published", ""),
+                        "tag": a.get("tag", "Chung"),
+                    }
+                }
+                success = push_to_vertex_search(doc)
+                if success:
+                    total_pushed += 1
+
+        print(f"[NewsTask] Completed. Pushed {total_pushed} new documents to Vertex DB.")
+
+    loop = get_or_create_eventloop()
+    try:
+        loop.run_until_complete(_run())
+    except Exception:
+        traceback.print_exc()
