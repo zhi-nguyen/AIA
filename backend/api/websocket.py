@@ -70,6 +70,11 @@ async def websocket_agent_endpoint(websocket: WebSocket, user_id: str, token: st
 @router.websocket("/ws/web/{user_id}")
 async def websocket_web_endpoint(websocket: WebSocket, user_id: str) -> None:
     await manager.connect_web(websocket, user_id)
+    
+    # Kích hoạt Background Task xử lý Offline Queue
+    from tasks import process_offline_queue
+    process_offline_queue.delay(user_id)
+
     try:
         while True:
             data = await websocket.receive_text()

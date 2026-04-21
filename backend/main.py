@@ -57,8 +57,14 @@ async def startup_event():
                                     # Lệnh dành cho Agent cục bộ (tạo Excel, Word, ...)
                                     await manager.send_to_agent(user_id, data)
                                 else:
-                                    # Chat response → chỉ gửi cho Web client
-                                    await manager.send_to_web(user_id, data)
+                                    # Gửi cho Web client
+                                    success = await manager.send_to_web(user_id, data)
+                                    if not success and msg_type in ["NEW_PROPOSAL", "WEATHER_ALERT", "NOTIFICATION"]:
+                                        # Người dùng offline -> Cho vào hàng đợi (Offline Queue)
+                                        # Đính kèm thời gian tạo để AI có cơ sở đánh giá quá hạn sau này
+                                        from datetime import datetime
+                                        data["created_timestamp"] = datetime.now().isoformat()
+                                        await client.lpush(f"offline_queue:{user_id}", json.dumps(data, ensure_ascii=False))
                         except Exception as e:
                             print(f"[Redis Listener Parse Error] {e}")
                 except Exception as e:
