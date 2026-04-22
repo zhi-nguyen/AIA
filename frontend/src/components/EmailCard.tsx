@@ -211,6 +211,16 @@ export default function ProposalCard({ proposal, onApprove, onDismiss }: Proposa
         </div>
       )}
 
+      {/* Offline Queue Expiry specific notice */}
+      {actions.find(a => a.action_type === "ignore" && a.payload?.note) && (
+        <div className="flex items-start gap-2 p-3 bg-red-50 rounded-xl border border-red-200/60 mb-3">
+          <Ban size={16} className="text-red-500 mt-0.5 shrink-0" />
+          <span className="text-xs text-red-700 leading-relaxed font-medium">
+            {actions.find(a => a.action_type === "ignore" && a.payload?.note)?.payload?.note}
+          </span>
+        </div>
+      )}
+
       {/* Dynamic action buttons OR Edit Form */}
       {editingIndex !== null && status === "pending" ? (
         <div style={{ marginTop: "12px", padding: "12px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid #444" }}>

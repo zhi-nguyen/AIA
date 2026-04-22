@@ -565,3 +565,85 @@ def fetch_and_index_news_task(self):
         loop.run_until_complete(_run())
     except Exception:
         traceback.print_exc()
+
+# ── Quản lý Offline Queue Task ────────────────────────────────────────────────
+@celery_app.task(name="tasks.process_offline_queue")
+def process_offline_queue(user_id: str):
+    import redis
+    import json
+    from datetime import datetime
+    import dateutil.parser
+    from celery_app import redis_url
+    from llm.gemini_client import get_gemini_client
+    from llm.prompts import OFFLINE_EXPIRY_PROMPT
+
+    r = redis.from_url(redis_url)
+    queue_key = f"offline_queue:{user_id}"
+    
+    # Kéo tất cả item cũ ra
+    items = r.lrange(queue_key, 0, -1)
+    if not items:
+        return
+
+    r.delete(queue_key)
+    client = get_gemini_client()
+    now_str = datetime.now().isoformat()
+
+    loop = get_or_create_eventloop()
+
+    for raw_item in items:
+        try:
+            item_data = json.loads(raw_item)
+            created_at = item_data.get("created_timestamp", "Không rõ")
+            
+            # Hỏi AI xem expired chưa
+            prompt = OFFLINE_EXPIRY_PROMPT.format(
+                created_timestamp=created_at,
+                current_timestamp=now_str,
+                proposal_json=json.dumps(item_data, ensure_ascii=False, indent=2)
+            )
+
+            # Gemini config enforcing JSON output
+            ai_resp = client.generate_pro(
+                "Đánh giá quá hạn",
+                system_instruction=prompt,
+            )
+            
+            # Trích xuất JSON từ AI
+            import re
+            json_match = re.search(r'\{.*\}', ai_resp, re.DOTALL)
+            if json_match:
+                ai_json_str = json_match.group(0)
+                eval_result = json.loads(ai_json_str)
+                is_expired = eval_result.get("expired", False)
+                reason = eval_result.get("reason", "")
+                
+                if is_expired:
+                    # Gắn cờ hết hạn
+                    if "data" in item_data and isinstance(item_data["data"], dict):
+                        inner = item_data["data"]
+                        title_fields = ["email_subject", "title", "subject", "event_title", "label"]
+                        for field in title_fields:
+                            if inner.get(field):
+                                inner[field] = f"[QUÁ HẠN] {inner[field]}"
+                        
+                        # Set suggested actions về ignore
+                        inner["suggested_actions"] = [{
+                            "action_type": "ignore",
+                            "label": "Đã Quá Hạn",
+                            "payload": {"note": reason}
+                        }]
+                        # Append lý do thẳng vào payload nếu có
+                        if "payload" in inner and isinstance(inner["payload"], dict):
+                            inner["payload"]["note"] = reason
+
+            # Publish qua WebSocket Pub/Sub sau khi qua kiểm duyệt
+            r.publish("aia_ws_messages", json.dumps(item_data, ensure_ascii=False))
+
+        except Exception as e:
+            print(f"[OfflineQueue] Error processing item for {user_id}: {e}")
+            # Đẩy trực tiếp item nếu lỗi AI
+            try:
+                r.publish("aia_ws_messages", raw_item.decode('utf-8') if isinstance(raw_item, bytes) else raw_item)
+            except Exception:
+                pass

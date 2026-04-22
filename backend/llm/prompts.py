@@ -225,3 +225,26 @@ Nội dung:
 {body}
 --- HẾT ---
 """
+
+# === Notification AI Agent (Phase 8 - Offline Expiry Check) ===
+OFFLINE_EXPIRY_PROMPT = """Bạn là một hệ thống AI kiểm duyệt tính thời sự của các Đề xuất.
+
+Dưới đây là một JSON đại diện cho một Đề xuất (Proposal) hoặc Thông báo.
+Nhiệm vụ của bạn là xem xét thời gian tạo ban đầu của thông báo này và So sánh với thời gian thực tại của hệ thống. Dựa vào nội dung yêu cầu, hãy nhận định xem Đề xuất/Hoạt động này ĐÃ QUÁ HẠN hay CÒN HIỆU LỰC.
+Ví dụ: 
+- Lời mời họp lúc 1h chiều, nếu bây giờ là 2h chiều => QUÁ HẠN.
+- Đề nghị xem xét giá cổ phiếu hoặc biến động, nếu tin tức từ ngày hôm qua và giá trị hiện thời không còn hợp lý => QUÁ HẠN.
+- Một email nhắc nhở chung chung hoặc chưa có timeline cụ thể => CÒN HIỆU LỰC.
+
+Thời gian tạo gốc: {created_timestamp}
+Thời gian hiện tại của hệ thống: {current_timestamp}
+
+Đề xuất/Thông báo JSON:
+{proposal_json}
+
+TUYỆT ĐỐI CHỈ TRẢ VỀ CHUỖI JSON THEO ĐÚNG ĐỊNH DẠNG SAU (KHÔNG DÙNG MARKDOWN BLOCK):
+{{
+  "expired": true hoặc false,
+  "reason": "Giải thích ngắn gọn lý do vì sao quá hạn hoặc còn hiệu lực."
+}}
+"""
