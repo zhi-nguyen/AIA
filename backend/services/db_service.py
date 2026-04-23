@@ -139,6 +139,28 @@ async def init_db_tables(pool: asyncpg.Pool):
             );
         """)
 
+        # --- CHAT HISTORY TABLES ---
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id VARCHAR(255) PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE cascade,
+                title VARCHAR(255),
+                is_temporary BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                session_id VARCHAR(255) NOT NULL REFERENCES chat_sessions(id) ON DELETE cascade,
+                role VARCHAR(50) NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         # Migration: copy dữ liệu từ bảng users cũ sang user_accounts (1 lần)
         await conn.execute("""
             INSERT INTO user_accounts (user_id, google_id, email, encrypted_access_token, encrypted_refresh_token, is_primary)
