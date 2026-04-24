@@ -15,6 +15,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     user_id: str
     session_id: str
+    is_temporary: bool
     user_context: str
     route: str
     route_reasoning: str

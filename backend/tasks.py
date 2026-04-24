@@ -34,7 +34,7 @@ def process_chat(
     image_context: str, 
     image_filename: str,
     session_id: str = "default_session",
-    use_long_term_memory: bool = False
+    is_temporary: bool = False
 ):
     from llm.gemini_client import current_user_id
     from langchain_core.messages import HumanMessage, AIMessage
@@ -66,17 +66,23 @@ def process_chat(
                 pass
                 
         # 2. Truy vấn Session Memory & Long-Term Memory (RAG Vector Store)
+        # PHIÊN TẠM: Hoàn toàn cách ly — không truy vấn bất kỳ RAG/document nào
         store = get_user_memory_store()
         session_rag_context = ""
-        try:
-            session_nodes_text = store.query(message, top_k=3, filters={"session_id": session_id})
-            if session_nodes_text and session_nodes_text != "Empty Response":
-                session_rag_context = f"\n\n[KÍ ỨC PHIÊN CHAT HIỆN TẠI (Tài liệu/Nội dung cũ)]\n{session_nodes_text}"
-        except Exception as e:
-            print(f"[Memory] Lỗi RAG session memory: {e}")
-            
         long_term_rag_context = ""
-        if use_long_term_memory:
+        
+        if is_temporary:
+            # Phiên ẩn danh: bỏ qua mọi ngữ cảnh, chỉ dùng short-term Redis
+            final_doc_context = ""
+            print(f"[Memory] Phiên tạm — bỏ qua toàn bộ RAG & document context")
+        else:
+            try:
+                session_nodes_text = store.query(message, top_k=3, filters={"session_id": session_id})
+                if session_nodes_text and session_nodes_text != "Empty Response":
+                    session_rag_context = f"\n\n[KÍ ỨC PHIÊN CHAT HIỆN TẠI (Tài liệu/Nội dung cũ)]\n{session_nodes_text}"
+            except Exception as e:
+                print(f"[Memory] Lỗi RAG session memory: {e}")
+                
             try:
                 lt_nodes_text = store.query(message, top_k=3, filters={"user_id": user_id, "memory_type": "global"})
                 if lt_nodes_text and lt_nodes_text != "Empty Response":
@@ -84,7 +90,7 @@ def process_chat(
             except Exception as e:
                 print(f"[Memory] Lỗi RAG long-term memory: {e}")
                 
-        final_doc_context = combined_context + session_rag_context + long_term_rag_context
+            final_doc_context = combined_context + session_rag_context + long_term_rag_context
 
         # Gắn thêm tin nhắn hiện tại của user vào tail
         current_msg = HumanMessage(content=message)
@@ -94,6 +100,7 @@ def process_chat(
             "messages": history_messages,
             "user_id": user_id,
             "session_id": session_id,
+            "is_temporary": is_temporary,
             "user_context": "",
             "route": "",
             "route_reasoning": "",
@@ -111,8 +118,6 @@ def process_chat(
         
         # --- Lưu short_term memory ---
         try:
-            # Lưu ý: lpush đẩy phần tử mới vào index 0. Ai mới nhất thì nằm ở đầu.
-            # Vậy trình tự: lpush user message -> sau đó lpush AI message.
             r.lpush(short_term_key, json.dumps({"role": "user", "content": message}))
             r.lpush(short_term_key, json.dumps({"role": "assistant", "content": ai_response_text}))
             r.ltrim(short_term_key, 0, 19)
@@ -120,15 +125,46 @@ def process_chat(
         except Exception as cache_err:
             print(f"[Memory] Short-term cache error: {cache_err}")
             
-        # --- Lưu memory back vào LlamaIndex RAG ---
-        def safe_background_rag():
-            try:
-                meta = {"user_id": user_id, "session_id": session_id, "memory_type": "global"}
-                store.add_documents([f"User: {message}\nAI: {ai_response_text}"], [meta])
-            except Exception as e:
-                print(f"[Memory] Global RAG index error: {e}")
-                
-        loop.run_in_executor(None, safe_background_rag)
+        # --- LƯU SQL & RAG NẾU KHÔNG PHẢI PHIÊN TẠM ---
+        if not is_temporary:
+            def safe_background_save():
+                import asyncio
+                # 1. Lưu SQL
+                try:
+                    from services.db_service import get_db_pool
+                    
+                    async def _save_sql():
+                        pool = await get_db_pool()
+                        async with pool.acquire() as conn:
+                            # Tự tạo session nếu lỡ như chưa gọi API POST /sessions
+                            await conn.execute("""
+                                INSERT INTO chat_sessions (id, user_id, title, is_temporary)
+                                VALUES ($1, $2, $3, $4)
+                                ON CONFLICT (id) DO NOTHING
+                            """, session_id, user_id, message[:100] + "...", False)
+
+                            await conn.execute("""
+                                INSERT INTO chat_messages (session_id, role, content)
+                                VALUES ($1, $2, $3), ($1, $4, $5)
+                            """, session_id, "user", message, "assistant", ai_response_text)
+                            
+                            await conn.execute("""
+                                UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1
+                            """, session_id)
+                            
+                    loop = get_or_create_eventloop()
+                    loop.run_until_complete(_save_sql())
+                except Exception as sql_e:
+                    print(f"[Memory] SQL Save error: {sql_e}")
+
+                # 2. Lưu RAG
+                try:
+                    meta = {"user_id": user_id, "session_id": session_id, "memory_type": "global"}
+                    store.add_documents([f"User: {message}\nAI: {ai_response_text}"], [meta])
+                except Exception as e:
+                    print(f"[Memory] Global RAG index error: {e}")
+                    
+            loop.run_in_executor(None, safe_background_save)
 
         response_payload = {
             "response": ai_response_text,

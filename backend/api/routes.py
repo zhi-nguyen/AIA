@@ -71,7 +71,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str = "default_user"
     session_id: str = "default_session"
-    use_long_term_memory: bool = False
+    is_temporary: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -116,7 +116,7 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
         image_filename = user_store.get('image_filename', 'ảnh')
 
         from tasks import process_chat
-        print(f"[API] Dispatching chat task for message: {request.message[:100]}")
+        print(f"[API] Dispatching chat task for message: {request.message[:100]} | temp: {getattr(request, 'is_temporary', False)}")
         task = process_chat.delay(
             user_id, 
             request.message, 
@@ -124,7 +124,7 @@ async def chat(request: ChatRequest, user_id: str = Depends(get_current_user_id)
             image_context, 
             image_filename,
             request.session_id,
-            request.use_long_term_memory
+            getattr(request, 'is_temporary', False)
         )
         
         return TaskResponse(task_id=task.id, status="processing")
@@ -1077,3 +1077,116 @@ async def get_recommended_news(user_id: str = Depends(get_current_user_id)):
     except Exception as e:
         print(f"[News API] Lỗi lấy tin từ Vertex Store: {e}")
         return {"status": "error", "news": []}
+
+# === Chat History API ===
+
+class CreateSessionRequest(BaseModel):
+    title: Optional[str] = "Cuộc trò chuyện mới"
+    is_temporary: Optional[bool] = False
+
+@router.get("/chat/sessions")
+async def get_chat_sessions(user_id: str = Depends(get_current_user_id)):
+    """Lấy danh sách phiên chat bình thường."""
+    from services.db_service import get_db_pool
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        records = await conn.fetch("""
+            SELECT id, title, is_temporary, created_at, updated_at
+            FROM chat_sessions
+            WHERE user_id = $1 AND is_temporary = False
+            ORDER BY updated_at DESC
+        """, user_id)
+        
+        sessions = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "is_temporary": r["is_temporary"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None
+            }
+            for r in records
+        ]
+        return {"status": "ok", "sessions": sessions}
+
+@router.post("/chat/sessions")
+async def create_chat_session(req: CreateSessionRequest, user_id: str = Depends(get_current_user_id)):
+    """Tạo mới một session (Tạm hoặc Bình thường)."""
+    import uuid
+    from services.db_service import get_db_pool
+    
+    session_id = f"sess-{uuid.uuid4().hex[:8]}"
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO chat_sessions (id, user_id, title, is_temporary)
+            VALUES ($1, $2, $3, $4)
+        """, session_id, user_id, req.title, req.is_temporary)
+        
+    return {"status": "ok", "session_id": session_id}
+
+@router.get("/chat/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, user_id: str = Depends(get_current_user_id)):
+    """Lấy toàn bộ tin nhắn của một phiên."""
+    from services.db_service import get_db_pool
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Kiểm tra session có thuộc về user_id không để bảo mật
+        owner = await conn.fetchval("SELECT user_id FROM chat_sessions WHERE id = $1", session_id)
+        if str(owner) != user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        records = await conn.fetch("""
+            SELECT id, role, content, created_at
+            FROM chat_messages
+            WHERE session_id = $1
+            ORDER BY created_at ASC
+        """, session_id)
+        
+        messages = [
+            {
+                "id": str(r["id"]),
+                "role": r["role"],
+                "content": r["content"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in records
+        ]
+        return {"status": "ok", "messages": messages}
+
+@router.delete("/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str, user_id: str = Depends(get_current_user_id)):
+    """Xóa phiên khỏi CSDL SQL, Vector DB RAG, và Redis short-term cache."""
+    from services.db_service import get_db_pool
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        owner = await conn.fetchval("SELECT user_id FROM chat_sessions WHERE id = $1", session_id)
+        if not owner or str(owner) != user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        
+        # 1. Xoá SQL (CASCADE sẽ xoá chat_messages theo)
+        await conn.execute("DELETE FROM chat_sessions WHERE id = $1", session_id)
+        print(f"[Delete] Đã xoá chat_sessions + chat_messages cho session: {session_id}")
+        
+        # 2. Xoá Vector DB RAG
+        try:
+            deleted_count = await conn.execute("""
+                DELETE FROM data_aia_vector_store
+                WHERE metadata_->>'session_id' = $1
+            """, session_id)
+            print(f"[Delete] Đã xoá vector RAG: {deleted_count} cho session: {session_id}")
+        except Exception as e:
+            print(f"[Delete] Lỗi khi xoá vector RAG: {e}")
+
+    # 3. Xoá Redis short-term cache
+    try:
+        import redis
+        from celery_app import redis_url
+        r = redis.from_url(redis_url)
+        cache_key = f"chat:short_term:{session_id}"
+        r.delete(cache_key)
+        print(f"[Delete] Đã xoá Redis cache: {cache_key}")
+    except Exception as e:
+        print(f"[Delete] Lỗi khi xoá Redis cache: {e}")
+
+    return {"status": "ok", "deleted": True}

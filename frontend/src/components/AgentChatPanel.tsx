@@ -12,9 +12,12 @@ interface ChatState {
   error: string | null;
   send: (content: string) => void;
   clearMessages: () => void;
-  sessionId: string;
-  useLongTermMemory: boolean;
-  setUseLongTermMemory: (val: boolean) => void;
+  sessionId: string | null;
+  isTemporary: boolean;
+  sessions: import("@/lib/api").ChatSession[];
+  loadSessionMessages: (id: string, temp: boolean) => void;
+  startNewSession: (temp: boolean) => void;
+  removeSession: (id: string) => void;
 }
 
 interface AgentChatPanelProps {
@@ -41,10 +44,14 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChatPanelProps) {
-  const { messages, isLoading, error, send, clearMessages } = chatState;
+  const { 
+    messages, isLoading, error, send, clearMessages,
+    sessionId, isTemporary, sessions, loadSessionMessages, startNewSession, removeSession
+  } = chatState;
   const { isRecording, isProcessing, voiceError, startRecording, stopRecording } = useVoice();
   
   const [input, setInput] = useState("");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -191,35 +198,96 @@ export default function AgentChatPanel({ isOpen, onClose, chatState }: AgentChat
   const canSend = (input.trim().length > 0 || pendingFile !== null) && !isLoading && !isUploading;
 
   return (
-    <div className="absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in">
+    <div className="absolute top-0 right-0 h-full w-[450px] bg-white shadow-2xl border-l border-slate-200 z-30 flex flex-col panel-slide-in overflow-hidden">
+      {/* Sidebar Drawer */}
+      <div 
+        className={`absolute top-0 left-0 h-full w-64 bg-slate-50 border-r border-slate-200 z-40 transform transition-transform duration-300 ease-in-out ${
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="p-4 border-b border-slate-200 flex justify-between items-center">
+          <h3 className="font-bold text-slate-700">Lịch sử Chat</h3>
+          <button onClick={() => setIsSidebarOpen(false)} className="text-slate-400 hover:text-slate-800">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-3 border-b border-slate-200 space-y-2">
+          <button 
+            onClick={() => { chatState.startNewSession(false); setIsSidebarOpen(false); }}
+            className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm transition-colors text-left flex items-center gap-2"
+          >
+            <span className="text-lg leading-none">+</span> Phiên bình thường
+          </button>
+          <button 
+            onClick={() => { chatState.startNewSession(true); setIsSidebarOpen(false); }}
+            className="w-full py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-lg text-sm transition-colors text-left flex items-center gap-2"
+            title="Phiên tạm không nhớ vào dữ liệu gốc"
+          >
+            <span className="text-lg leading-none">+</span> Phiên tạm (Incognito)
+          </button>
+        </div>
+        <div className="overflow-y-auto h-[calc(100%-140px)]">
+          {chatState.sessions.length === 0 ? (
+            <div className="text-sm text-slate-500 p-4 text-center">Chưa có phiên lưu trữ.</div>
+          ) : (
+            <ul className="p-2 space-y-1">
+              {chatState.sessions.map(s => (
+                <li key={s.id} className="group flex items-center">
+                  <button 
+                    onClick={() => { chatState.loadSessionMessages(s.id, s.is_temporary); setIsSidebarOpen(false); }}
+                    className={`flex-1 text-left px-3 py-2 text-sm rounded-lg truncate transition-colors ${
+                      chatState.sessionId === s.id ? "bg-indigo-100 text-indigo-700 font-medium" : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                    title={s.title || "Không có tiêu đề"}
+                  >
+                    {s.title || "Cuộc trò chuyện"}
+                  </button>
+                  <button
+                    onClick={() => chatState.removeSession(s.id)}
+                    className="opacity-0 group-hover:opacity-100 p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                    title="Xóa phiên này"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Overlay khi mở Drawer */}
+      {isSidebarOpen && (
+        <div 
+          className="absolute inset-0 bg-slate-900/10 z-30 pointer-events-auto backdrop-blur-[1px]" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex justify-between items-center bg-white border-b border-slate-100 p-5 shrink-0 shadow-sm z-10 relative">
-        <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg">
-          <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-sm shadow-emerald-500/50"></span>
-          Agent Chatbox
-        </h2>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setIsSidebarOpen(true)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <div className="flex flex-col">
+            <h2 className="font-bold text-slate-800 flex items-center gap-2 text-lg leading-tight">
+              <span className={`w-2.5 h-2.5 rounded-full animate-pulse shadow-sm ${
+                chatState.isTemporary ? "bg-amber-500 shadow-amber-500/50" : "bg-emerald-500 shadow-emerald-500/50"
+              }`}></span>
+              Agent Chatbox
+            </h2>
+            <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 ml-4.5">
+              {chatState.isTemporary ? "Phiên tạm (Incognito)" : "Ghi nhớ bình thường"}
+            </span>
+          </div>
+        </div>
         <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200" title="Nếu bật, AI sẽ dùng RAG để nhớ lại tất cả các phiên chat trước đây của bạn">
-              <input 
-                id="use-ltm-toggle"
-                type="checkbox" 
-                checked={chatState.useLongTermMemory}
-                onChange={(e) => chatState.setUseLongTermMemory(e.target.checked)}
-                className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-              />
-              <label htmlFor="use-ltm-toggle" className="ml-2 text-xs font-medium text-slate-600 cursor-pointer">
-                Ký ức cũ
-              </label>
-            </div>
-            <button 
-              type="button" 
-              onClick={chatState.clearMessages} 
-              className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium rounded-lg transition-colors border border-indigo-100"
-              title="Xóa chat và tạo phiên mới"
-            >
-              Làm mới
-            </button>
+          <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors">
               <X className="w-4 h-4" />
             </button>
