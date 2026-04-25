@@ -533,7 +533,7 @@ def fetch_and_index_news_task(self):
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             # Thu thập toàn bộ danh sách user (Mockup: query sessions hoặc events proxy user_id)
-            rows = await conn.fetch("SELECT user_id::text FROM user_sessions")
+            rows = await conn.fetch("SELECT user_id::text FROM sessions")
             user_ids = list(set([row["user_id"] for row in rows if row["user_id"]]))
             if "default_user" not in user_ids:
                 user_ids.append("default_user")
