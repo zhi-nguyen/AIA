@@ -67,6 +67,23 @@ services:
     networks:
       - aia-network
 
+  # === Landing Page (Marketing & Downloads) ===
+  landing-page:
+    build:
+      context: ./landing-page
+      dockerfile: Dockerfile
+    container_name: aia-landing-page
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      # Map host folder to easily serve/update the .exe without rebuilding image
+      - ./landing-page/public/downloads:/app/public/downloads
+    env_file:
+      - ./landing-page/.env
+    networks:
+      - aia-network
+
   # === Redis (Broker for Celery + PubSub) ===
   redis:
     image: redis:7-alpine
