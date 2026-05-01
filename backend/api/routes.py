@@ -777,6 +777,19 @@ class EditEventRequest(BaseModel):
             return [p.strip() for p in v.split(",") if p.strip()]
         return v
 
+class CreateEventRequest(BaseModel):
+    title: str
+    proposed_time: Optional[str] = None
+    note: Optional[str] = None
+    participants: Optional[list[str]] = None
+    weather_dependent: bool = False
+    
+    @field_validator('participants', mode='before')
+    def split_participants(cls, v):
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
+
 class CancelEventRequest(BaseModel):
     reply_body: Optional[str] = None
     recipients: Optional[list[str]] = None
@@ -799,6 +812,58 @@ async def get_events(user_id: str = Depends(get_current_user_id)):
         if isinstance(e.get("created_at"), datetime):
             e["created_at"] = e["created_at"].isoformat()
     return events
+
+@router.post("/events")
+async def create_event(request: CreateEventRequest, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user_id)):
+    from services.db_service import create_pending_event, save_event_weather_task_id
+    from datetime import datetime
+    
+    dt_proposed = None
+    if request.proposed_time:
+        try:
+            dt_proposed = datetime.fromisoformat(request.proposed_time)
+        except Exception:
+            dt_proposed = None
+
+    eid = await create_pending_event(
+        user_id=user_id,
+        title=request.title,
+        participants=request.participants or [],
+        proposed_time=dt_proposed,
+        status="confirmed",
+        note=request.note,
+        weather_dependent=request.weather_dependent
+    )
+
+    # Schedule ETA weather check 1h trước event
+    if request.weather_dependent and request.proposed_time:
+        try:
+            from datetime import timedelta, timezone
+            from tasks import check_weather_before_event
+
+            event_time = datetime.fromisoformat(request.proposed_time)
+            if event_time.tzinfo is None:
+                vn_tz = timezone(timedelta(hours=7))
+                event_time = event_time.replace(tzinfo=vn_tz)
+
+            check_time = event_time - timedelta(hours=1)
+            now = datetime.now(event_time.tzinfo)
+
+            if check_time > now:
+                task = check_weather_before_event.apply_async(
+                    args=[eid, user_id],
+                    eta=check_time,
+                )
+                await save_event_weather_task_id(eid, task.id)
+            else:
+                task = check_weather_before_event.apply_async(
+                    args=[eid, user_id],
+                )
+                await save_event_weather_task_id(eid, task.id)
+        except Exception as schedule_err:
+            print(f"[CreateEvent] ETA schedule error: {schedule_err}")
+
+    return {"status": "ok", "event_id": eid}
 
 @router.put("/events/{event_id}")
 async def update_event(event_id: str, request: EditEventRequest, user_id: str = Depends(get_current_user_id)):

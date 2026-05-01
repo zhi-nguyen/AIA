@@ -6,8 +6,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getEvents, updateEvent, cancelEvent, completeEvent } from "@/lib/api";
-import { Calendar, Clock, CloudRain, Users, AlignLeft, X, RefreshCw, ChevronLeft, ChevronRight, Edit2, Trash2, Send, CheckCircle } from "lucide-react";
+import { getEvents, updateEvent, cancelEvent, completeEvent, createEvent } from "@/lib/api";
+import { Calendar, Clock, CloudRain, Users, AlignLeft, X, RefreshCw, ChevronLeft, ChevronRight, Edit2, Trash2, Send, CheckCircle, Plus } from "lucide-react";
 
 interface CalendarSidebarProps {
   isOpen: boolean;
@@ -32,6 +32,16 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
   const [cancelingEventId, setCancelingEventId] = useState<string | null>(null);
   const [cancelReplyBody, setCancelReplyBody] = useState("");
 
+  // Create Event State
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+  const [createFormData, setCreateFormData] = useState<any>({
+    title: "",
+    proposed_time: "",
+    note: "",
+    participants: "",
+    weather_dependent: false
+  });
+
   const fetchEvents = async () => {
     try {
       setIsRefreshing(true);
@@ -53,6 +63,31 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
       if (!selectedDate) setSelectedDate(new Date());
     }
   }, [isOpen]);
+
+  // Handle Event Creation
+  const handleCreateEvent = async () => {
+    try {
+      setIsRefreshing(true);
+      const currentParticipants = typeof createFormData.participants === 'string' 
+        ? createFormData.participants.split(',').map((p: string) => p.trim()).filter(Boolean)
+        : createFormData.participants;
+
+      await createEvent({
+        title: createFormData.title || "Lịch hẹn mới",
+        proposed_time: createFormData.proposed_time || new Date().toISOString(),
+        note: createFormData.note,
+        participants: currentParticipants,
+        weather_dependent: createFormData.weather_dependent
+      });
+      setIsCreatingEvent(false);
+      setCreateFormData({title: "", proposed_time: "", note: "", participants: "", weather_dependent: false});
+      await fetchEvents();
+    } catch (err: any) {
+      alert("Lỗi tạo lịch: " + err.message);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Handle Event Saving
   const handleSaveEdit = async () => {
@@ -170,6 +205,13 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
         </h2>
         <div className="flex gap-2 items-center">
           <button
+            className="p-2 bg-blue-600/20 text-blue-400 hover:text-white hover:bg-blue-600/40 rounded-xl transition-colors border border-blue-500/30"
+            onClick={() => setIsCreatingEvent(true)}
+            title="Tạo lịch hẹn mới"
+          >
+            <Plus size={16} />
+          </button>
+          <button
             className="p-2 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 rounded-xl transition-colors border border-slate-700"
             onClick={fetchEvents}
             disabled={isRefreshing}
@@ -239,6 +281,54 @@ export default function CalendarSidebar({ isOpen, onClose }: CalendarSidebarProp
           </div>
 
           <hr style={{ borderColor: "#333", margin: "4px 0" }}/>
+
+          {isCreatingEvent && (
+            <div style={{ padding: "12px", background: "rgba(59, 130, 246, 0.1)", borderRadius: "8px", border: "1px solid rgba(59, 130, 246, 0.3)", marginBottom: "12px" }}>
+              <h4 style={{ margin: "0 0 12px 0", color: "#60a5fa", fontSize: "14px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Plus size={16} /> Tạo lịch hẹn mới
+              </h4>
+              <input 
+                type="text" 
+                placeholder="Tiêu đề lịch hẹn..."
+                value={createFormData.title} 
+                onChange={(e) => setCreateFormData({...createFormData, title: e.target.value})}
+                style={{ width: "100%", padding: "6px 8px", background: "rgba(0,0,0,0.3)", border: "1px solid #555", borderRadius: "4px", color: "white", marginBottom: "8px", fontSize: "14px", fontWeight: "bold" }}
+              />
+              
+              <input 
+                type="datetime-local" 
+                value={createFormData.proposed_time ? toDateTimeLocalFormat(createFormData.proposed_time) : ""} 
+                onChange={(e) => setCreateFormData({...createFormData, proposed_time: e.target.value ? (new Date(e.target.value)).toISOString() : ""})}
+                style={{ width: "100%", padding: "6px 8px", background: "rgba(0,0,0,0.3)", border: "1px solid #555", borderRadius: "4px", color: "white", marginBottom: "8px", fontSize: "13px" }}
+              />
+              
+              <input 
+                type="text" 
+                placeholder="Thành viên tham dự (Cách nhau bởi dấu phẩy)"
+                value={createFormData.participants} 
+                onChange={(e) => setCreateFormData({...createFormData, participants: e.target.value})}
+                style={{ width: "100%", padding: "6px 8px", background: "rgba(0,0,0,0.3)", border: "1px solid #555", borderRadius: "4px", color: "white", marginBottom: "8px", fontSize: "13px" }}
+              />
+
+              <textarea
+                placeholder="Ghi chú công việc..."
+                value={createFormData.note}
+                onChange={(e) => setCreateFormData({...createFormData, note: e.target.value})}
+                style={{ width: "100%", padding: "6px 8px", background: "rgba(0,0,0,0.3)", border: "1px solid #555", borderRadius: "4px", color: "white", marginBottom: "8px", fontSize: "13px", resize: "none" }}
+                rows={2}
+              />
+
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#cbd5e1", marginBottom: "12px", cursor: "pointer" }}>
+                <input type="checkbox" checked={createFormData.weather_dependent} onChange={(e) => setCreateFormData({...createFormData, weather_dependent: e.target.checked})} />
+                Ngoài trời / Bị ảnh hưởng bởi thời tiết
+              </label>
+
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                <button onClick={() => setIsCreatingEvent(false)} style={{ padding: "6px 12px", borderRadius: "6px", border: "none", background: "rgba(255,255,255,0.1)", color: "white", fontSize: "12px", cursor: "pointer" }}>Hủy</button>
+                <button onClick={handleCreateEvent} style={{ padding: "6px 12px", borderRadius: "6px", border: "none", background: "#3b82f6", color: "white", fontSize: "12px", cursor: "pointer" }}>Tạo lịch</button>
+              </div>
+            </div>
+          )}
 
           {loading && !isRefreshing ? (
             <div className="typing-indicator" style={{ alignSelf: "center" }}>
